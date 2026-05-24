@@ -1,0 +1,291 @@
+:root {
+  --bg-color: #121212;
+  --surface: rgba(31, 31, 31, 0.82);
+  --text-primary: #f7f4ef;
+  --text-secondary: #aaa39a;
+  
+  --column-bg: rgba(34, 34, 34, 0.72);
+  --card-bg: rgba(255, 255, 255, 0.06);
+  --card-border: rgba(255, 255, 255, 0.12);
+  --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
+  --glass-backdrop: blur(12px);
+  
+  --accent: #2dd4bf;
+  --accent-hover: #14b8a6;
+  
+  --success: #22c55e;
+  --error: #ef4444;
+  --warning: #f59e0b;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: var(--bg-color);
+  background-image: 
+    radial-gradient(at 10% 0%, rgba(45, 212, 191, 0.12) 0, transparent 36%), 
+    radial-gradient(at 100% 12%, rgba(245, 158, 11, 0.10) 0, transparent 34%);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: inherit;
+}
+
+/* Glassmorphism Utilities */
+.glass-panel {
+  background: var(--column-bg);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 8px;
+}
+
+.glass-card {
+  background: var(--card-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.1);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.25);
+}
+
+/* Buttons */
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+  color: inherit;
+}
+
+.btn-primary {
+  background-color: var(--accent);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-hover);
+}
+
+.btn-primary:active {
+  transform: scale(0.97);
+}
+
+.text-input {
+  width: 100%;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: white;
+  transition: border-color 0.2s;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* App Layout */
+.app-header {
+  padding: 20px 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.app-message {
+  padding: 32px;
+  text-align: center;
+}
+
+.app-message-error {
+  color: var(--error);
+}
+
+.app-banner {
+  margin: 16px 32px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.34);
+  border-radius: 8px;
+  color: #f8d98a;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 0.875rem;
+}
+
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.status-dot.online { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+.status-dot.offline { background-color: var(--error); }
+.status-dot.reconnecting { background-color: var(--warning); animation: pulse 1.5s infinite; }
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+/* Kanban Layout */
+.board-container {
+  display: flex;
+  gap: 24px;
+  padding: 32px;
+  overflow-x: auto;
+  align-items: flex-start;
+  height: calc(100vh - 80px);
+}
+
+.kanban-column {
+  min-width: 320px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+
+.column-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.column-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 50px;
+}
+
+.kanban-card {
+  padding: 16px;
+  cursor: grab;
+  position: relative;
+}
+
+.kanban-card:active {
+  cursor: grabbing;
+}
+
+.kanban-card p {
+  font-size: 0.95rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.card-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.card-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-card-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.add-card-btn:hover {
+  background: rgba(255,255,255,0.05);
+  color: white;
+}
+
+/* Drag overlay styles */
+.drag-overlay-item {
+  transform: scale(1.05);
+  box-shadow: 0 15px 30px -5px rgba(0, 0, 0, 0.4);
+  cursor: grabbing;
+}
+
+@media (max-width: 760px) {
+  .app-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px 20px;
+  }
+
+  .board-container {
+    height: auto;
+    min-height: calc(100vh - 120px);
+    padding: 20px;
+  }
+
+  .kanban-column {
+    min-width: min(320px, calc(100vw - 40px));
+    max-width: min(320px, calc(100vw - 40px));
+  }
+}
