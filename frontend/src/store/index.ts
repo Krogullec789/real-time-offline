@@ -9,7 +9,12 @@ import type {
   ConnectionStatus,
 } from '../types';
 import { getDB, queueOfflineAction, syncDatabaseFromServer } from '../db';
-import { processOutbox } from '../queue';
+import {
+  type OutboxStatus,
+  processOutbox,
+  publishOutboxStatus,
+  subscribeOutboxStatus,
+} from '../queue';
 import * as api from '../api';
 
 interface BoardState {
@@ -18,14 +23,18 @@ interface BoardState {
   columns: Column[];
   cards: Card[];
   connectionStatus: ConnectionStatus;
+  outboxStatus: OutboxStatus;
   setConnectionStatus: (status: ConnectionStatus) => void;
   initializeBoard: (boardData: BoardData) => Promise<void>;
-  addCard: (columnId: string, title: string) => Promise<void>;
+  addCard: (columnId: string, title: string, priority?: 'low' | 'medium' | 'high') => Promise<void>;
   updateCard: (cardId: string, updates: Partial<Card>) => Promise<void>;
   deleteCard: (cardId: string) => Promise<void>;
   moveCard: (cardId: string, newColumnId: string, newOrder: number) => Promise<void>;
   moveCardsBatch: (positions: Omit<CardPositionRequest, 'clientUpdatedAt'>[]) => Promise<void>;
   addColumn: (title: string) => Promise<void>;
+  updateColumn: (columnId: string, title: string) => Promise<void>;
+  deleteColumn: (columnId: string) => Promise<void>;
+  moveColumn: (columnId: string, newOrder: number) => Promise<void>;
   applyRemoteCardChange: (card: Card) => Promise<void>;
   applyRemoteColumnChange: (column: Column) => Promise<void>;
   applyRemoteCardDelete: (cardId: string) => Promise<void>;
@@ -56,6 +65,12 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   columns: [],
   cards: [],
   connectionStatus: initialConnectionStatus(),
+  outboxStatus: {
+    pendingCount: 0,
+    syncingCount: 0,
+    failedCount: 0,
+    isSyncing: false,
+  },
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 
@@ -85,7 +100,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     void processOutbox(api);
   },
 
-  addCard: async (columnId, title) => {
+  addCard: async (columnId, title, priority) => {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
 
@@ -99,6 +114,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       columnId,
       title: trimmedTitle,
       description: '',
+      priority: priority || 'medium',
       order: maxOrder + 1,
       updatedAt: now,
     };
@@ -109,10 +125,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     await queueOfflineAction({
       id: createId(),
       type: 'CREATE_CARD',
-      payload: newCard,
+      payload: {
+        id: newCard.id,
+        columnId: newCard.columnId,
+        title: newCard.title,
+        description: newCard.description,
+        priority: newCard.priority
+      },
       timestamp: now,
     });
 
+    await publishOutboxStatus();
     void processOutbox(api);
   },
 
@@ -132,10 +155,19 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     await queueOfflineAction({
       id: createId(),
       type: 'UPDATE_CARD',
-      payload: { ...updatedCard, clientUpdatedAt: now },
+      payload: {
+        id: updatedCard.id,
+        columnId: updatedCard.columnId,
+        title: updatedCard.title,
+        description: updatedCard.description,
+        priority: updatedCard.priority,
+        order: updatedCard.order,
+        clientUpdatedAt: now
+      },
       timestamp: now,
     });
 
+    await publishOutboxStatus();
     void processOutbox(api);
   },
 
@@ -154,6 +186,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       timestamp: new Date().toISOString(),
     });
 
+    await publishOutboxStatus();
     void processOutbox(api);
   },
 
@@ -201,6 +234,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       timestamp: now,
     });
 
+    await publishOutboxStatus();
     void processOutbox(api);
   },
 
@@ -231,6 +265,106 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       timestamp: now,
     });
 
+    await publishOutboxStatus();
+    void processOutbox(api);
+  },
+
+  updateColumn: async (columnId, title) => {
+    const trimmedTitle = title.trim();
+    const { columns, boardId } = get();
+    if (!boardId || !trimmedTitle) return;
+
+    const column = columns.find((c) => c.id === columnId);
+    if (!column) return;
+
+    const now = new Date().toISOString();
+    const updatedColumn = { ...column, title: trimmedTitle, updatedAt: now };
+
+    set((state) => ({
+      columns: state.columns.map((c) => (c.id === columnId ? updatedColumn : c)),
+    }));
+
+    const db = await getDB();
+    await db.put('columns', updatedColumn);
+
+    await queueOfflineAction({
+      id: createId(),
+      type: 'UPDATE_COLUMN',
+      payload: { id: columnId, boardId, title: trimmedTitle, order: column.order },
+      timestamp: now,
+    });
+
+    await publishOutboxStatus();
+    void processOutbox(api);
+  },
+
+  deleteColumn: async (columnId) => {
+    const { boardId } = get();
+    if (!boardId) return;
+
+    set((state) => ({
+      columns: state.columns.filter((c) => c.id !== columnId),
+      cards: state.cards.filter((c) => c.columnId !== columnId),
+    }));
+
+    const db = await getDB();
+    const tx = db.transaction(['columns', 'cards'], 'readwrite');
+    await tx.objectStore('columns').delete(columnId);
+    const cards = await tx.objectStore('cards').index('by-column').getAll(columnId);
+    await Promise.all(cards.map((c) => tx.objectStore('cards').delete(c.id)));
+    await tx.done;
+
+    await queueOfflineAction({
+      id: createId(),
+      type: 'DELETE_COLUMN',
+      payload: { id: columnId, boardId },
+      timestamp: new Date().toISOString(),
+    });
+
+    await publishOutboxStatus();
+    void processOutbox(api);
+  },
+
+  moveColumn: async (columnId, newOrder) => {
+    const { columns, boardId } = get();
+    if (!boardId) return;
+
+    const column = columns.find((c) => c.id === columnId);
+    if (!column) return;
+
+    const now = new Date().toISOString();
+    const sorted = [...columns].sort((a, b) => a.order - b.order);
+    const oldIndex = sorted.findIndex((c) => c.id === columnId);
+    if (oldIndex === -1) return;
+
+    sorted.splice(oldIndex, 1);
+    sorted.splice(newOrder, 0, column);
+
+    const updatedColumns = sorted.map((col, index) => ({
+      ...col,
+      order: index,
+      updatedAt: now,
+    }));
+
+    set({ columns: updatedColumns });
+
+    const db = await getDB();
+    const tx = db.transaction('columns', 'readwrite');
+    for (const col of updatedColumns) {
+      await tx.store.put(col);
+    }
+    await tx.done;
+
+    for (const col of updatedColumns) {
+      await queueOfflineAction({
+        id: createId(),
+        type: 'UPDATE_COLUMN',
+        payload: { id: col.id, boardId, title: col.title, order: col.order },
+        timestamp: now,
+      });
+    }
+
+    await publishOutboxStatus();
     void processOutbox(api);
   },
 
@@ -304,6 +438,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     await tx.done;
   },
 }));
+
+subscribeOutboxStatus((outboxStatus) => {
+  useBoardStore.setState({ outboxStatus });
+});
 
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {

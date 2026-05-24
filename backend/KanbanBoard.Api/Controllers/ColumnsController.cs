@@ -10,7 +10,7 @@ namespace KanbanBoard.Api.Controllers;
 
 [ApiController]
 [Route("api/boards/{boardId:guid}/[controller]")]
-public class ColumnsController(KanbanDbContext db, IHubContext<KanbanHub> hub) : ControllerBase
+public class ColumnsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILogger<ColumnsController> logger) : ControllerBase
 {
     [HttpPost]
     public async Task<ActionResult<ColumnDto>> Create(Guid boardId, CreateColumnRequest req)
@@ -40,6 +40,8 @@ public class ColumnsController(KanbanDbContext db, IHubContext<KanbanHub> hub) :
         db.Columns.Add(column);
         await db.SaveChangesAsync();
 
+        logger.LogInformation("Created column {ColumnId} in board {BoardId} with title: '{Title}'", column.Id, boardId, column.Title);
+
         var dto = BoardsController.MapColumn(column);
         await hub.Clients.Group($"board-{boardId}").SendAsync("ColumnCreated", dto);
 
@@ -66,6 +68,8 @@ public class ColumnsController(KanbanDbContext db, IHubContext<KanbanHub> hub) :
 
         await db.SaveChangesAsync();
 
+        logger.LogInformation("Updated column {ColumnId} in board {BoardId}: title='{Title}', order={Order}", id, boardId, column.Title, column.Order);
+
         var dto = BoardsController.MapColumn(column);
         await hub.Clients.Group($"board-{boardId}").SendAsync("ColumnUpdated", dto);
 
@@ -84,6 +88,8 @@ public class ColumnsController(KanbanDbContext db, IHubContext<KanbanHub> hub) :
         column.Board.UpdatedAt = DateTime.UtcNow;
         db.Columns.Remove(column);
         await db.SaveChangesAsync();
+
+        logger.LogInformation("Deleted column {ColumnId} in board {BoardId}", id, boardId);
 
         await hub.Clients.Group($"board-{boardId}").SendAsync("ColumnDeleted", id);
 

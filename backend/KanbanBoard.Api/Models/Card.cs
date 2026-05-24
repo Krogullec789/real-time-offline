@@ -6,6 +6,7 @@ public class Card
     public Guid ColumnId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
+    public string Priority { get; set; } = "medium";
 
     /// <summary>0-based display order within the column.</summary>
     public int Order { get; set; }

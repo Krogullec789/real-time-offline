@@ -11,7 +11,7 @@ namespace KanbanBoard.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub) : ControllerBase
+public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILogger<CardsController> logger) : ControllerBase
 {
     [HttpPost]
     public async Task<ActionResult<CardDto>> Create(CreateCardRequest req)
@@ -36,9 +36,12 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub) : C
             ColumnId = req.ColumnId,
             Title = req.Title.Trim(),
             Description = (req.Description ?? string.Empty).Trim(),
+            Priority = (req.Priority ?? "medium").Trim().ToLower(),
             Order = maxOrder + 1,
             UpdatedAt = now,
         };
+
+        logger.LogInformation("Creating card {CardId} in column {ColumnId} with title: '{Title}', priority: '{Priority}'", card.Id, card.ColumnId, card.Title, card.Priority);
 
         column.UpdatedAt = now;
         column.Board.UpdatedAt = now;
@@ -72,6 +75,7 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub) : C
 
         if (req.ClientUpdatedAt < card.UpdatedAt)
         {
+            logger.LogWarning("Conflict updating card {CardId}: client version ({ClientTime}) is older than server version ({ServerTime})", id, req.ClientUpdatedAt, card.UpdatedAt);
             return Conflict(new
             {
                 message = "Conflict: server has a newer version.",
@@ -91,12 +95,15 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub) : C
         var now = DateTime.UtcNow;
         card.Title = req.Title.Trim();
         card.Description = (req.Description ?? string.Empty).Trim();
+        card.Priority = (req.Priority ?? "medium").Trim().ToLower();
         card.Order = req.Order;
         card.ColumnId = req.ColumnId;
         card.UpdatedAt = now;
         card.Column.UpdatedAt = now;
         targetColumn.UpdatedAt = now;
         targetColumn.Board.UpdatedAt = now;
+
+        logger.LogInformation("Updated card {CardId}: title='{Title}', priority='{Priority}', columnId={ColumnId}", card.Id, card.Title, card.Priority, card.ColumnId);
 
         await db.SaveChangesAsync();
 
@@ -120,6 +127,9 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub) : C
         var now = DateTime.UtcNow;
         card.Column.UpdatedAt = now;
         card.Column.Board.UpdatedAt = now;
+        
+        logger.LogInformation("Deleting card {CardId} from column {ColumnId} on board {BoardId}", card.Id, card.ColumnId, boardId);
+
         db.Cards.Remove(card);
         await db.SaveChangesAsync();
 
@@ -161,10 +171,16 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub) : C
         }
 
         var now = DateTime.UtcNow;
+        logger.LogInformation("Batch moving {Count} cards on board {BoardId}", requestedPositions.Length, boardId);
+
         foreach (var position in requestedPositions)
         {
             var card = cards[position.Id];
-            if (position.ClientUpdatedAt < card.UpdatedAt) continue;
+            if (position.ClientUpdatedAt < card.UpdatedAt)
+            {
+                logger.LogWarning("Conflict in batch move for card {CardId}: client version ({ClientTime}) is older than server version ({ServerTime}). Skipping card move.", card.Id, position.ClientUpdatedAt, card.UpdatedAt);
+                continue;
+            }
 
             card.ColumnId = position.ColumnId;
             card.Order = position.Order;

@@ -17,6 +17,7 @@ export interface Card {
   columnId: string;
   title: string;
   description: string;
+  priority: 'low' | 'medium' | 'high';
   order: number;
   updatedAt: string;
 }
@@ -58,6 +59,7 @@ export interface CreateCardRequest {
   columnId: string;
   title: string;
   description?: string;
+  priority?: 'low' | 'medium' | 'high';
 }
 
 export interface UpdateCardRequest {
@@ -65,6 +67,7 @@ export interface UpdateCardRequest {
   columnId: string;
   title: string;
   description: string;
+  priority: 'low' | 'medium' | 'high';
   order: number;
   clientUpdatedAt: string;
 }

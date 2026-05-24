@@ -3,10 +3,10 @@ import type { Card } from '../types';
 import { calculateCardMove } from './dragReorder';
 
 const baseCards: Card[] = [
-  { id: 'a', columnId: 'todo', title: 'A', description: '', order: 0, updatedAt: '2026-05-08T10:00:00Z' },
-  { id: 'b', columnId: 'todo', title: 'B', description: '', order: 1, updatedAt: '2026-05-08T10:00:00Z' },
-  { id: 'c', columnId: 'done', title: 'C', description: '', order: 0, updatedAt: '2026-05-08T10:00:00Z' },
-  { id: 'd', columnId: 'done', title: 'D', description: '', order: 1, updatedAt: '2026-05-08T10:00:00Z' },
+  { id: 'a', columnId: 'todo', title: 'A', description: '', priority: 'medium', order: 0, updatedAt: '2026-05-08T10:00:00Z' },
+  { id: 'b', columnId: 'todo', title: 'B', description: '', priority: 'medium', order: 1, updatedAt: '2026-05-08T10:00:00Z' },
+  { id: 'c', columnId: 'done', title: 'C', description: '', priority: 'medium', order: 0, updatedAt: '2026-05-08T10:00:00Z' },
+  { id: 'd', columnId: 'done', title: 'D', description: '', priority: 'medium', order: 1, updatedAt: '2026-05-08T10:00:00Z' },
 ];
 
 describe('calculateCardMove', () => {

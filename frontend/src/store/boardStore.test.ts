@@ -23,6 +23,7 @@ const boardData = {
           columnId: 'column-1',
           title: 'Write tests',
           description: '',
+          priority: 'medium' as const,
           order: 0,
           updatedAt: '2026-05-08T10:00:00.000Z',
         },
@@ -90,6 +91,17 @@ describe('board store offline behavior', () => {
         boardId: 'board-1',
         title: 'Review',
       }),
+    });
+  });
+
+  it('updates outbox status after queueing an offline card change', async () => {
+    await useBoardStore.getState().initializeBoard(boardData);
+    await useBoardStore.getState().addCard('column-1', 'Draft offline');
+
+    expect(useBoardStore.getState().outboxStatus).toMatchObject({
+      pendingCount: 1,
+      failedCount: 0,
+      isSyncing: false,
     });
   });
 });

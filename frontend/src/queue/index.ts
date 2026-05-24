@@ -10,6 +10,14 @@ import type {
 } from '../types';
 
 let isSyncing = false;
+const statusListeners = new Set<(status: OutboxStatus) => void>();
+
+export interface OutboxStatus {
+  pendingCount: number;
+  syncingCount: number;
+  failedCount: number;
+  isSyncing: boolean;
+}
 
 // We'll pass in these API functions from where they are defined, 
 // to avoid circular dependencies or keep the networking decoupled.
@@ -29,12 +37,48 @@ function isApiErrorWithStatus(error: unknown, status: number) {
     && (error as { response?: Response }).response?.status === status;
 }
 
+export async function getOutboxStatus(): Promise<OutboxStatus> {
+  const db = await getDB();
+  const operations = await db.getAll('outbox');
+
+  return {
+    pendingCount: operations.filter((operation) => operation.status === 'pending').length,
+    syncingCount: operations.filter((operation) => operation.status === 'syncing').length,
+    failedCount: operations.filter((operation) => operation.status === 'failed').length,
+    isSyncing,
+  };
+}
+
+export async function publishOutboxStatus() {
+  const status = await getOutboxStatus();
+  for (const listener of statusListeners) {
+    listener(status);
+  }
+}
+
+export function subscribeOutboxStatus(listener: (status: OutboxStatus) => void) {
+  statusListeners.add(listener);
+  void publishOutboxStatus();
+
+  return () => {
+    statusListeners.delete(listener);
+  };
+}
+
 export async function processOutbox(apiClient: ApiClient) {
-  if (isSyncing) return;
-  if (!navigator.onLine) return; // Wait until online
+  if (isSyncing) {
+    await publishOutboxStatus();
+    return;
+  }
+
+  if (!navigator.onLine) {
+    await publishOutboxStatus();
+    return;
+  }
 
   isSyncing = true;
   const db = await getDB();
+  await publishOutboxStatus();
   
   try {
     const tx = db.transaction('outbox', 'readwrite');
@@ -48,12 +92,14 @@ export async function processOutbox(apiClient: ApiClient) {
       // Mark as syncing
       op.status = 'syncing';
       await db.put('outbox', op);
+      await publishOutboxStatus();
       
       try {
         await executeOperation(op, apiClient);
         
         // Success: remove from outbox
         await db.delete('outbox', op.id);
+        await publishOutboxStatus();
       } catch (err: unknown) {
         console.error('Failed to sync offline operation', op, err);
         
@@ -61,6 +107,7 @@ export async function processOutbox(apiClient: ApiClient) {
         if (isApiErrorWithStatus(err, 409)) {
           console.warn('Conflict detected, server version is ahead. Discarding offline operation.');
           await db.delete('outbox', op.id);
+          await publishOutboxStatus();
           // (In a fuller app, we'd trigger a re-fetch of the board state from server here)
         } else {
           // General network error or something else - let's retry later
@@ -71,11 +118,13 @@ export async function processOutbox(apiClient: ApiClient) {
               op.status = 'failed';
           }
           await db.put('outbox', op);
+          await publishOutboxStatus();
         }
       }
     }
   } finally {
     isSyncing = false;
+    await publishOutboxStatus();
   }
 }
 

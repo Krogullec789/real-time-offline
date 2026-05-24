@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: kanban-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: kanban
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kanban"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/KanbanBoard.Api/Dockerfile
+    container_name: kanban-backend-api
+    ports:
+      - "5212:5212"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=kanban;Username=postgres;Password=postgres
+      - Cors__AllowedOrigins__0=http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        - VITE_API_BASE_URL=http://localhost:5212/api
+        - VITE_SIGNALR_URL=http://localhost:5212/hubs/kanban
+    container_name: kanban-frontend-spa
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

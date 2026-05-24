@@ -20,8 +20,13 @@ import { KanbanCard } from './KanbanCard';
 import { useBoardStore } from '../store';
 import type { Card, Column } from '../types';
 import { calculateCardMove } from './dragReorder';
+import { Plus } from 'lucide-react';
 
-export function Board() {
+interface BoardProps {
+  onSelectCard?: (card: Card) => void;
+}
+
+export function Board({ onSelectCard }: BoardProps) {
   const columns = useBoardStore(s => s.columns);
   const cards = useBoardStore(s => s.cards);
   
@@ -93,6 +98,14 @@ export function Board() {
 
       await moveCardsBatch(positions);
     }
+
+    // Handle Column sorting
+    if (active.data.current?.type === 'Column') {
+      const overIndex = sortedColumns.findIndex(c => c.id === overId);
+      if (overIndex !== -1) {
+        await useBoardStore.getState().moveColumn(String(activeId), overIndex);
+      }
+    }
   };
 
   return (
@@ -109,9 +122,12 @@ export function Board() {
               key={col.id}
               column={col}
               cards={cardsByColumn.get(col.id) || []}
+              onSelectCard={onSelectCard}
             />
           ))}
         </SortableContext>
+        
+        <AddColumnForm />
       </div>
 
       <DragOverlay>
@@ -124,5 +140,48 @@ export function Board() {
         )}
       </DragOverlay>
     </DndContext>
+  );
+}
+
+function AddColumnForm() {
+  const addColumn = useBoardStore(s => s.addColumn);
+  const [isAdding, setIsAdding] = useState(false);
+  const [title, setTitle] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+    await addColumn(title);
+    setTitle('');
+    setIsAdding(false);
+  };
+
+  if (!isAdding) {
+    return (
+      <button className="glass-panel add-column-trigger-btn" onClick={() => setIsAdding(true)}>
+        <Plus size={18} />
+        <span>Add column</span>
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="glass-panel add-column-form">
+      <input
+        autoFocus
+        type="text"
+        className="text-input"
+        placeholder="Enter column title..."
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Escape') setIsAdding(false);
+        }}
+      />
+      <div className="add-column-form-actions">
+        <button type="submit" className="btn-primary">Add</button>
+        <button type="button" className="btn-secondary" onClick={() => setIsAdding(false)}>Cancel</button>
+      </div>
+    </form>
   );
 }

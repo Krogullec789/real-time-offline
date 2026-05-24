@@ -8,14 +8,17 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-if (string.IsNullOrWhiteSpace(connectionString))
+if (!builder.Environment.IsEnvironment("Testing"))
 {
-    throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
-}
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
+    }
 
-builder.Services.AddDbContext<KanbanDbContext>(options =>
-    options.UseNpgsql(connectionString));
+    builder.Services.AddDbContext<KanbanDbContext>(options =>
+        options.UseNpgsql(connectionString));
+}
 
 builder.Services.AddSignalR();
 
@@ -38,7 +41,30 @@ if (app.Environment.IsDevelopment())
 
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<KanbanDbContext>();
-    await db.Database.MigrateAsync();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    
+    int retries = 5;
+    while (retries > 0)
+    {
+        try
+        {
+            logger.LogInformation("Applying EF Core migrations...");
+            await db.Database.MigrateAsync();
+            logger.LogInformation("Migrations applied successfully.");
+            break;
+        }
+        catch (Exception ex)
+        {
+            retries--;
+            logger.LogWarning(ex, "Failed to apply migrations. Retrying in 5 seconds... ({Retries} left)", retries);
+            if (retries == 0)
+            {
+                logger.LogError(ex, "Could not apply database migrations. Exiting.");
+                throw;
+            }
+            await Task.Delay(5000);
+        }
+    }
 }
 
 app.UseRouting();
@@ -49,3 +75,5 @@ app.MapControllers();
 app.MapHub<KanbanHub>("/hubs/kanban");
 
 app.Run();
+
+public partial class Program;

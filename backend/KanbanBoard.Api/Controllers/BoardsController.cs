@@ -40,6 +40,7 @@ public class BoardsController(KanbanDbContext db) : ControllerBase
         card.ColumnId,
         card.Title,
         card.Description,
+        card.Priority,
         card.Order,
         card.UpdatedAt);
 }

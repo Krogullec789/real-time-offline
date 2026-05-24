@@ -1,15 +1,16 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { formatDistanceToNow } from 'date-fns';
-import { Clock3 } from 'lucide-react';
+import { Clock3, Edit2 } from 'lucide-react';
 import type { Card } from '../types';
 
 interface Props {
   card: Card;
   isOverlay?: boolean;
+  onSelect?: () => void;
 }
 
-export function KanbanCard({ card, isOverlay }: Props) {
+export function KanbanCard({ card, isOverlay, onSelect }: Props) {
   const {
     attributes,
     listeners,
@@ -27,6 +28,15 @@ export function KanbanCard({ card, isOverlay }: Props) {
 
   const formattedDate = formatDistanceToNow(new Date(card.updatedAt), { addSuffix: true });
 
+  const getPriorityClass = (p: string) => {
+    switch (p) {
+      case 'high': return 'priority-high';
+      case 'medium': return 'priority-medium';
+      case 'low': return 'priority-low';
+      default: return 'priority-medium';
+    }
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -34,12 +44,38 @@ export function KanbanCard({ card, isOverlay }: Props) {
       className={`glass-card kanban-card ${isOverlay ? 'drag-overlay-item' : ''}`}
       {...attributes}
       {...listeners}
+      onClick={(e) => {
+        // If clicked on action button, prevent triggering double click / select
+        if ((e.target as HTMLElement).closest('.card-action-btn')) {
+          return;
+        }
+        onSelect?.();
+      }}
     >
-      <p>{card.title}</p>
+      <div className="card-header-row">
+        <span className={`priority-badge ${getPriorityClass(card.priority)}`}>
+          {card.priority}
+        </span>
+        
+        {!isOverlay && (
+          <button 
+            className="card-action-btn edit-btn" 
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect?.();
+            }}
+            title="Edit card"
+          >
+            <Edit2 size={12} />
+          </button>
+        )}
+      </div>
+
+      <p className="card-title-text">{card.title}</p>
 
       <div className="card-meta">
         <span className="card-meta-item">
-          <Clock3 size={14} aria-hidden="true" />
+          <Clock3 size={12} aria-hidden="true" />
           {formattedDate}
         </span>
       </div>

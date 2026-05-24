@@ -35,6 +35,7 @@ public class KanbanDbContext(DbContextOptions<KanbanDbContext> options) : DbCont
             card.HasKey(x => x.Id);
             card.Property(x => x.Title).HasMaxLength(500).IsRequired();
             card.Property(x => x.Description).HasMaxLength(4000);
+            card.Property(x => x.Priority).HasMaxLength(50).HasDefaultValue("medium").IsRequired();
 
             card.HasOne(x => x.Column)
                 .WithMany(column => column.Cards)
@@ -67,11 +68,11 @@ public class KanbanDbContext(DbContextOptions<KanbanDbContext> options) : DbCont
             new Column { Id = doneId, BoardId = boardId, Title = "Done", Order = 3, CreatedAt = now, UpdatedAt = now });
 
         modelBuilder.Entity<Card>().HasData(
-            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000021"), ColumnId = backlogId, Title = "Set up CI/CD pipeline", Order = 0, UpdatedAt = now },
-            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000022"), ColumnId = backlogId, Title = "Write API documentation", Order = 1, UpdatedAt = now },
-            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000023"), ColumnId = inProgressId, Title = "Implement SignalR hub", Order = 0, UpdatedAt = now },
-            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000024"), ColumnId = inProgressId, Title = "Build offline sync queue", Order = 1, UpdatedAt = now },
-            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000025"), ColumnId = reviewId, Title = "Design database schema", Order = 0, UpdatedAt = now },
-            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000026"), ColumnId = doneId, Title = "Project scaffolding", Order = 0, UpdatedAt = now });
+            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000021"), ColumnId = backlogId, Title = "Set up CI/CD pipeline", Description = "", Priority = "medium", Order = 0, UpdatedAt = now },
+            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000022"), ColumnId = backlogId, Title = "Write API documentation", Description = "", Priority = "low", Order = 1, UpdatedAt = now },
+            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000023"), ColumnId = inProgressId, Title = "Implement SignalR hub", Description = "", Priority = "high", Order = 0, UpdatedAt = now },
+            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000024"), ColumnId = inProgressId, Title = "Build offline sync queue", Description = "", Priority = "high", Order = 1, UpdatedAt = now },
+            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000025"), ColumnId = reviewId, Title = "Design database schema", Description = "", Priority = "medium", Order = 0, UpdatedAt = now },
+            new Card { Id = Guid.Parse("00000000-0000-0000-0000-000000000026"), ColumnId = doneId, Title = "Project scaffolding", Description = "", Priority = "low", Order = 0, UpdatedAt = now });
     }
 }
