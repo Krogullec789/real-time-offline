@@ -38,6 +38,70 @@ public class BatchMoveEndpointTests
         Assert.Equal(targetColumnId, movedCard.ColumnId);
         Assert.Equal(2, movedCard.Order);
     }
+
+    [Fact]
+    public async Task CreateCard_RejectsUnsupportedPriority()
+    {
+        await using var factory = new KanbanApiFactory();
+        using var client = factory.CreateClient();
+
+        var columnId = Guid.Parse("00000000-0000-0000-0000-000000000011");
+
+        var response = await client.PostAsJsonAsync("/api/cards", new CreateCardRequest(
+            Id: null,
+            ColumnId: columnId,
+            Title: "Add professional validation",
+            Description: "",
+            Priority: "urgent"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task BatchMove_ReturnsConflictAndLeavesCardsUnchangedWhenClientVersionIsStale()
+    {
+        await using var factory = new KanbanApiFactory();
+        using var client = factory.CreateClient();
+
+        var cardId = Guid.Parse("00000000-0000-0000-0000-000000000021");
+        var targetColumnId = Guid.Parse("00000000-0000-0000-0000-000000000012");
+        var serverUpdatedAt = DateTime.UtcNow.AddMinutes(5);
+        var staleClientUpdatedAt = serverUpdatedAt.AddMinutes(-1);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<KanbanDbContext>();
+            var card = await db.Cards.SingleAsync(card => card.Id == cardId);
+            card.UpdatedAt = serverUpdatedAt;
+            await db.SaveChangesAsync();
+        }
+
+        var payload = new BatchMoveRequest([
+            new CardPositionDto(cardId, targetColumnId, 2, staleClientUpdatedAt)
+        ]);
+
+        var response = await client.PutAsJsonAsync("/api/cards/batch-move", payload);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        using var verificationScope = factory.Services.CreateScope();
+        var verificationDb = verificationScope.ServiceProvider.GetRequiredService<KanbanDbContext>();
+        var unchangedCard = await verificationDb.Cards.AsNoTracking().SingleAsync(card => card.Id == cardId);
+
+        Assert.Equal(Guid.Parse("00000000-0000-0000-0000-000000000011"), unchangedCard.ColumnId);
+        Assert.Equal(0, unchangedCard.Order);
+    }
+
+    [Fact]
+    public async Task BatchMove_RejectsRequestsWithoutCardsCollection()
+    {
+        await using var factory = new KanbanApiFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.PutAsJsonAsync("/api/cards/batch-move", new { });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }
 
 public sealed class KanbanApiFactory : WebApplicationFactory<Program>

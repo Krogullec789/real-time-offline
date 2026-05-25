@@ -23,6 +23,10 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
             .FirstOrDefaultAsync(c => c.Id == req.ColumnId);
 
         if (column is null) return NotFound("Column not found.");
+        if (!CardPriorityValidator.TryNormalize(req.Priority, out var priority))
+        {
+            return BadRequest(CardPriorityValidator.ErrorMessage);
+        }
 
         var maxOrder = await db.Cards
             .Where(c => c.ColumnId == req.ColumnId)
@@ -36,7 +40,7 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
             ColumnId = req.ColumnId,
             Title = req.Title.Trim(),
             Description = (req.Description ?? string.Empty).Trim(),
-            Priority = (req.Priority ?? "medium").Trim().ToLower(),
+            Priority = priority,
             Order = maxOrder + 1,
             UpdatedAt = now,
         };
@@ -72,6 +76,10 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
             .FirstOrDefaultAsync(c => c.Id == id);
 
         if (card is null) return NotFound();
+        if (!CardPriorityValidator.TryNormalize(req.Priority, out var priority))
+        {
+            return BadRequest(CardPriorityValidator.ErrorMessage);
+        }
 
         if (req.ClientUpdatedAt < card.UpdatedAt)
         {
@@ -95,7 +103,7 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
         var now = DateTime.UtcNow;
         card.Title = req.Title.Trim();
         card.Description = (req.Description ?? string.Empty).Trim();
-        card.Priority = (req.Priority ?? "medium").Trim().ToLower();
+        card.Priority = priority;
         card.Order = req.Order;
         card.ColumnId = req.ColumnId;
         card.UpdatedAt = now;
@@ -173,15 +181,24 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
         var now = DateTime.UtcNow;
         logger.LogInformation("Batch moving {Count} cards on board {BoardId}", requestedPositions.Length, boardId);
 
+        var conflictedCards = requestedPositions
+            .Where(position => position.ClientUpdatedAt < cards[position.Id].UpdatedAt)
+            .Select(position => BoardsController.MapCard(cards[position.Id]))
+            .ToArray();
+
+        if (conflictedCards.Length > 0)
+        {
+            logger.LogWarning("Conflict in batch move on board {BoardId}: {Count} cards have newer server versions.", boardId, conflictedCards.Length);
+            return Conflict(new
+            {
+                message = "Conflict: one or more cards have newer server versions.",
+                serverCards = conflictedCards,
+            });
+        }
+
         foreach (var position in requestedPositions)
         {
             var card = cards[position.Id];
-            if (position.ClientUpdatedAt < card.UpdatedAt)
-            {
-                logger.LogWarning("Conflict in batch move for card {CardId}: client version ({ClientTime}) is older than server version ({ServerTime}). Skipping card move.", card.Id, position.ClientUpdatedAt, card.UpdatedAt);
-                continue;
-            }
-
             card.ColumnId = position.ColumnId;
             card.Order = position.Order;
             card.UpdatedAt = now;

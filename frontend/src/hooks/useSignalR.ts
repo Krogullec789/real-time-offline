@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as signalR from '@microsoft/signalr';
 import { useBoardStore } from '../store';
+import { leaveBoardAndStop } from './signalRConnection';
 
 const SIGNALR_URL = import.meta.env.VITE_SIGNALR_URL ?? 'http://localhost:5212/hubs/kanban';
 
@@ -24,6 +25,7 @@ export function useSignalR(boardId: string | null) {
       .build();
 
     connection.current = newConnection;
+    let isDisposed = false;
 
     newConnection.onreconnecting(() => {
       setConnectionStatus('reconnecting');
@@ -50,23 +52,29 @@ export function useSignalR(boardId: string | null) {
 
     // Connect
     newConnection.start()
-      .then(() => {
+      .then(async () => {
+        if (isDisposed) {
+          await newConnection.stop();
+          return;
+        }
+
         setConnectionStatus('online');
-        return newConnection.invoke('JoinBoard', boardId);
+        await newConnection.invoke('JoinBoard', boardId);
       })
       .catch(e => {
-        console.error('SignalR Connection Error: ', e);
-        setConnectionStatus('offline');
+        if (!isDisposed) {
+          console.error('SignalR Connection Error: ', e);
+          setConnectionStatus('offline');
+        }
       });
 
     // Cleanup
     return () => {
+      isDisposed = true;
       if (connection.current) {
         const connectionToStop = connection.current;
         connection.current = null;
-        connectionToStop.invoke('LeaveBoard', boardId)
-          .then(() => connectionToStop.stop())
-          .catch(console.error);
+        void leaveBoardAndStop(connectionToStop, boardId);
       }
     };
   }, [

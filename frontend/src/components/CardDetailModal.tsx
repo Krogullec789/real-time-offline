@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Trash2, AlertCircle } from 'lucide-react';
 import { useBoardStore } from '../store';
 import type { Card } from '../types';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface Props {
   card: Card;
@@ -15,14 +16,16 @@ export function CardDetailModal({ card, onClose }: Props) {
   const [title, setTitle] = useState(card.title);
   const [description, setDescription] = useState(card.description);
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>(card.priority);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isDeleteDialogOpen) return;
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [isDeleteDialogOpen, onClose]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,15 +40,15 @@ export function CardDetailModal({ card, onClose }: Props) {
   };
 
   const handleDelete = async () => {
-    if (window.confirm("Are you sure you want to delete this card?")) {
-      await deleteCard(card.id);
-      onClose();
-    }
+    await deleteCard(card.id);
+    setIsDeleteDialogOpen(false);
+    onClose();
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="glass-panel modal-content" onClick={e => e.stopPropagation()}>
+    <>
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="glass-panel modal-content" onClick={e => e.stopPropagation()}>
         <header className="modal-header">
           <h3>Edit Task</h3>
           <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">
@@ -96,7 +99,7 @@ export function CardDetailModal({ card, onClose }: Props) {
           </div>
 
           <div className="modal-actions">
-            <button type="button" className="btn-danger" onClick={handleDelete}>
+            <button type="button" className="btn-danger" onClick={() => setIsDeleteDialogOpen(true)}>
               <Trash2 size={16} />
               <span>Delete</span>
             </button>
@@ -108,7 +111,18 @@ export function CardDetailModal({ card, onClose }: Props) {
             </button>
           </div>
         </form>
+        </div>
       </div>
-    </div>
+
+      <ConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        title="Delete card"
+        description={`Delete "${card.title}"? This action cannot be undone.`}
+        confirmLabel="Delete card"
+        tone="danger"
+        onConfirm={handleDelete}
+        onCancel={() => setIsDeleteDialogOpen(false)}
+      />
+    </>
   );
 }

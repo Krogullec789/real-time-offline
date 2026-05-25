@@ -43,6 +43,7 @@ Create `frontend/.env` if you need non-default URLs:
 ```env
 VITE_API_BASE_URL=http://localhost:5212/api
 VITE_SIGNALR_URL=http://localhost:5212/hubs/kanban
+VITE_BOARD_ID=00000000-0000-0000-0000-000000000001
 ```
 
 Then run:

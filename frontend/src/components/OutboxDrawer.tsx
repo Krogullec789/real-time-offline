@@ -3,6 +3,8 @@ import { useBoardStore } from '../store';
 import { getDB, type SyncOperation } from '../db';
 import { X, RefreshCw, Trash2, Clock, CheckCircle2, AlertTriangle, ArrowRightLeft } from 'lucide-react';
 import { processOutbox } from '../queue';
+import { describeSyncOperation } from '../queue/describeOperation';
+import { ConfirmDialog } from './ConfirmDialog';
 import * as api from '../api';
 
 interface Props {
@@ -14,6 +16,7 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
   const outboxStatus = useBoardStore(s => s.outboxStatus);
   const connectionStatus = useBoardStore(s => s.connectionStatus);
   const [operations, setOperations] = useState<SyncOperation[]>([]);
+  const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
 
   useEffect(() => {
     async function loadOperations() {
@@ -38,22 +41,21 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
   };
 
   const handleClearOutbox = async () => {
-    if (window.confirm("Are you sure you want to clear all pending changes? Local modifications will not be synced to the server.")) {
-      try {
-        const db = await getDB();
-        await db.clear('outbox');
-        // Force store update
-        useBoardStore.setState({
-          outboxStatus: {
-            pendingCount: 0,
-            syncingCount: 0,
-            failedCount: 0,
-            isSyncing: false
-          }
-        });
-      } catch (err) {
-        console.error("Failed to clear outbox", err);
-      }
+    try {
+      const db = await getDB();
+      await db.clear('outbox');
+      setIsClearDialogOpen(false);
+      // Force store update
+      useBoardStore.setState({
+        outboxStatus: {
+          pendingCount: 0,
+          syncingCount: 0,
+          failedCount: 0,
+          isSyncing: false
+        }
+      });
+    } catch (err) {
+      console.error("Failed to clear outbox", err);
     }
   };
 
@@ -77,31 +79,10 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
     }
   };
 
-  const getOpDescription = (op: SyncOperation) => {
-    const payload = op.payload as any;
-    switch (op.type) {
-      case 'CREATE_CARD':
-        return `Add card "${payload.title}"`;
-      case 'UPDATE_CARD':
-        return `Edit card "${payload.title}"`;
-      case 'DELETE_CARD':
-        return `Delete card`;
-      case 'CREATE_COLUMN':
-        return `Create column "${payload.title}"`;
-      case 'UPDATE_COLUMN':
-        return `Update column to "${payload.title}" (order ${payload.order})`;
-      case 'DELETE_COLUMN':
-        return `Delete column`;
-      case 'BATCH_MOVE_CARDS':
-        return `Move ${payload.cards?.length || 0} cards`;
-      default:
-        return 'Unknown action';
-    }
-  };
-
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="glass-panel outbox-drawer" onClick={e => e.stopPropagation()}>
+    <>
+      <div className="drawer-backdrop" onClick={onClose}>
+        <aside className="glass-panel outbox-drawer" onClick={e => e.stopPropagation()}>
         <header className="drawer-header">
           <div className="drawer-title-group">
             <h3>Offline Sync Outbox</h3>
@@ -127,7 +108,7 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
           
           <button 
             className="btn-secondary btn-danger-text" 
-            onClick={handleClearOutbox}
+            onClick={() => setIsClearDialogOpen(true)}
             disabled={operations.length === 0}
           >
             <Trash2 size={16} />
@@ -153,7 +134,7 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
                     </span>
                   </div>
                   
-                  <p className="op-desc">{getOpDescription(op)}</p>
+                  <p className="op-desc">{describeSyncOperation(op)}</p>
                   
                   <div className="op-footer-row">
                     <span className={`op-status-text op-status-${op.status}`}>
@@ -182,7 +163,18 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
             </div>
           )}
         </div>
-      </aside>
-    </div>
+        </aside>
+      </div>
+
+      <ConfirmDialog
+        isOpen={isClearDialogOpen}
+        title="Clear offline queue"
+        description="Clear all pending changes? Local modifications in the queue will not be synced to the server."
+        confirmLabel="Clear queue"
+        tone="danger"
+        onConfirm={handleClearOutbox}
+        onCancel={() => setIsClearDialogOpen(false)}
+      />
+    </>
   );
 }

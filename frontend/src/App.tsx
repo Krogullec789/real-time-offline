@@ -7,9 +7,8 @@ import { loadBoardFromCache } from './db';
 import { CardDetailModal } from './components/CardDetailModal';
 import { OutboxDrawer } from './components/OutboxDrawer';
 import type { Card } from './types';
+import { MAIN_BOARD_ID } from './config';
 import './index.css';
-
-const MAIN_BOARD_ID = '00000000-0000-0000-0000-000000000001';
 
 function App() {
   const initializeBoard = useBoardStore(s => s.initializeBoard);

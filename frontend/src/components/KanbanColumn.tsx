@@ -6,6 +6,7 @@ import { KanbanCard } from './KanbanCard';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useBoardStore } from '../store';
 import { Plus, Trash2, GripVertical } from 'lucide-react';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface Props {
   column: Column;
@@ -27,6 +28,7 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
   const [newCardTitle, setNewCardTitle] = useState('');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState(column.title);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -49,10 +51,9 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
     setIsEditingTitle(false);
   };
 
-  const handleDelete = () => {
-    if (window.confirm(`Are you sure you want to delete column "${column.title}"? This will delete all cards inside.`)) {
-      deleteColumn(column.id);
-    }
+  const handleDeleteConfirm = async () => {
+    await deleteColumn(column.id);
+    setIsDeleteDialogOpen(false);
   };
 
   const handleAddSubmit = (e: React.FormEvent) => {
@@ -67,11 +68,12 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
   const sortedCards = [...cards].sort((a, b) => a.order - b.order);
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="glass-panel kanban-column"
-    >
+    <>
+      <div
+        ref={setNodeRef}
+        style={style}
+        className="glass-panel kanban-column"
+      >
       <div className="column-header">
         <div className="column-drag-handle" {...attributes} {...listeners} title="Drag column">
           <GripVertical size={16} />
@@ -102,7 +104,7 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
         <span className="column-card-count">{cards.length}</span>
         
         <div className="column-actions">
-          <button className="column-action-btn delete-btn" onClick={handleDelete} title="Delete column">
+          <button className="column-action-btn delete-btn" onClick={() => setIsDeleteDialogOpen(true)} title="Delete column">
             <Trash2 size={14} />
           </button>
         </div>
@@ -140,6 +142,17 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
           </button>
         )}
       </div>
-    </div>
+      </div>
+
+      <ConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        title="Delete column"
+        description={`Delete "${column.title}" and all cards inside? This action cannot be undone.`}
+        confirmLabel="Delete column"
+        tone="danger"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setIsDeleteDialogOpen(false)}
+      />
+    </>
   );
 }
