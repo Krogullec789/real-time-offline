@@ -2,6 +2,21 @@
 
 A portfolio-grade Kanban board built with React, TypeScript, ASP.NET Core, PostgreSQL, SignalR, and IndexedDB. The app supports real-time collaboration events, optimistic updates, and an offline outbox that replays queued changes when the browser comes back online.
 
+## Application Preview
+
+Here is how the application looks and manages real-time offline synchronization:
+
+### 1. Main Kanban Board (Connected)
+A responsive dark-mode Kanban interface featuring drag-and-drop card moves, column additions/deletions, and real-time status indicators.
+![Main Kanban Board](assets/kanban_board.jpg)
+
+### 2. Offline Synchronization Flow
+When connection is lost, mutations are cached locally in an IndexedDB outbox. Once connection is restored, the queue replays to update the database.
+
+| Offline Mode (Pending Outbox Queue) | Online Mode (Synced & Replayed) |
+|:---:|:---:|
+| ![Offline Mode](assets/offline_sync.jpg) | ![Online Queue Synced](assets/queue.jpg) |
+
 ## Highlights
 
 - Real-time board updates with SignalR groups per board.
