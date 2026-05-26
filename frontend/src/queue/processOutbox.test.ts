@@ -204,4 +204,124 @@ describe('processOutbox', () => {
     const db = await getDB();
     await expect(db.getAll('outbox')).resolves.toEqual([]);
   });
+
+  it('uses the server timestamp from an offline card create before replaying its later edit', async () => {
+    await queueOfflineAction({
+      id: 'create-card',
+      type: 'CREATE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      payload: {
+        id: 'card-a',
+        columnId: 'todo',
+        title: 'Draft card',
+        description: '',
+        priority: 'medium',
+      },
+    });
+    await queueOfflineAction({
+      id: 'edit-card',
+      type: 'UPDATE_CARD',
+      timestamp: '2026-05-25T10:01:00.000Z',
+      payload: {
+        id: 'card-a',
+        columnId: 'todo',
+        title: 'Final offline title',
+        description: 'Edited before reconnect',
+        priority: 'high',
+        order: 0,
+        clientUpdatedAt: '2026-05-25T10:01:00.000Z',
+      },
+    });
+
+    const createCard = vi.fn().mockResolvedValue({
+      id: 'card-a',
+      columnId: 'todo',
+      title: 'Draft card',
+      description: '',
+      priority: 'medium',
+      order: 0,
+      updatedAt: '2026-05-25T10:02:00.000Z',
+    });
+    const updateCard = vi.fn().mockResolvedValue({
+      id: 'card-a',
+      columnId: 'todo',
+      title: 'Final offline title',
+      description: 'Edited before reconnect',
+      priority: 'high',
+      order: 0,
+      updatedAt: '2026-05-25T10:03:00.000Z',
+    });
+
+    await processOutbox(createApiClient({ createCard, updateCard }));
+
+    expect(updateCard).toHaveBeenCalledWith('card-a', {
+      id: 'card-a',
+      columnId: 'todo',
+      title: 'Final offline title',
+      description: 'Edited before reconnect',
+      priority: 'high',
+      order: 0,
+      clientUpdatedAt: '2026-05-25T10:02:00.000Z',
+    });
+
+    const db = await getDB();
+    await expect(db.getAll('outbox')).resolves.toEqual([]);
+  });
+
+  it('uses the server timestamp from an offline card create before replaying its later move', async () => {
+    await queueOfflineAction({
+      id: 'create-card',
+      type: 'CREATE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      payload: {
+        id: 'card-a',
+        columnId: 'todo',
+        title: 'Offline card',
+        description: '',
+        priority: 'medium',
+      },
+    });
+    await queueOfflineAction({
+      id: 'move-card',
+      type: 'BATCH_MOVE_CARDS',
+      timestamp: '2026-05-25T10:01:00.000Z',
+      payload: {
+        cards: [
+          {
+            id: 'card-a',
+            columnId: 'done',
+            order: 1,
+            clientUpdatedAt: '2026-05-25T10:01:00.000Z',
+          },
+        ],
+      },
+    });
+
+    const createCard = vi.fn().mockResolvedValue({
+      id: 'card-a',
+      columnId: 'todo',
+      title: 'Offline card',
+      description: '',
+      priority: 'medium',
+      order: 0,
+      updatedAt: '2026-05-25T10:02:00.000Z',
+    });
+    const batchMoveCards = vi.fn().mockResolvedValue([]);
+
+    await processOutbox(createApiClient({ createCard, batchMoveCards }));
+
+    expect(batchMoveCards).toHaveBeenCalledWith({
+      cards: [
+        {
+          id: 'card-a',
+          columnId: 'done',
+          order: 1,
+          clientUpdatedAt: '2026-05-25T10:02:00.000Z',
+        },
+      ],
+    });
+
+    const db = await getDB();
+    await expect(db.getAll('outbox')).resolves.toEqual([]);
+  });
 });

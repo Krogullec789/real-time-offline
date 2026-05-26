@@ -33,6 +33,20 @@ When connection is lost, mutations are cached locally in an IndexedDB outbox. On
 
 ## Getting Started
 
+### Docker Compose
+
+The fastest way to run the full stack is Docker Compose:
+
+```powershell
+docker compose up --build
+```
+
+Then open:
+
+- Frontend: http://localhost:3000
+- API Swagger UI: http://localhost:5212/swagger
+- PostgreSQL: localhost:5432 (`postgres` / `postgres`, database `kanban`)
+
 ### Backend
 
 1. Start PostgreSQL locally and create a `kanban` database.
@@ -70,6 +84,8 @@ npm run dev
 ```
 
 ## Verification
+
+GitHub Actions runs the frontend and backend checks on pushes to `main` and on pull requests.
 
 Run these before pushing changes:
 

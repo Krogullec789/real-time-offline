@@ -25,6 +25,7 @@ interface OutboxWorkItem {
 }
 
 type BatchMoveOperation = Extract<SyncOperation, { type: 'BATCH_MOVE_CARDS' }>;
+type CreatedCardVersions = Map<string, string>;
 
 // We'll pass in these API functions from where they are defined, 
 // to avoid circular dependencies or keep the networking decoupled.
@@ -96,8 +97,10 @@ export async function processOutbox(apiClient: ApiClient) {
     pendingOps.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const workItems = coalesceRepeatedCardUpdates(coalesceConsecutiveCardMoveBatches(pendingOps));
 
+    const createdCardVersions: CreatedCardVersions = new Map();
+
     for (const workItem of workItems) {
-      const op = workItem.operation;
+      const op = applyCreatedCardVersions(workItem.operation, createdCardVersions);
 
       for (const operationId of workItem.operationIds.filter((id) => id !== op.id)) {
         await db.delete('outbox', operationId);
@@ -109,7 +112,11 @@ export async function processOutbox(apiClient: ApiClient) {
       await publishOutboxStatus();
       
       try {
-        await executeOperation(op, apiClient);
+        const result = await executeOperation(op, apiClient);
+        if (op.type === 'CREATE_CARD' && result) {
+          const createdCard = result as Card;
+          createdCardVersions.set(createdCard.id, createdCard.updatedAt);
+        }
         
         // Success: remove from outbox
         for (const operationId of workItem.operationIds) {
@@ -143,6 +150,44 @@ export async function processOutbox(apiClient: ApiClient) {
     isSyncing = false;
     await publishOutboxStatus();
   }
+}
+
+function applyCreatedCardVersions(operation: SyncOperation, createdCardVersions: CreatedCardVersions): SyncOperation {
+  if (operation.type === 'UPDATE_CARD') {
+    const serverUpdatedAt = createdCardVersions.get(operation.payload.id);
+    if (!serverUpdatedAt) return operation;
+
+    return {
+      ...operation,
+      payload: {
+        ...operation.payload,
+        clientUpdatedAt: serverUpdatedAt,
+      },
+    };
+  }
+
+  if (operation.type === 'BATCH_MOVE_CARDS') {
+    let changed = false;
+    const cards = operation.payload.cards.map((cardPosition) => {
+      const serverUpdatedAt = createdCardVersions.get(cardPosition.id);
+      if (!serverUpdatedAt) return cardPosition;
+
+      changed = true;
+      return {
+        ...cardPosition,
+        clientUpdatedAt: serverUpdatedAt,
+      };
+    });
+
+    return changed
+      ? {
+          ...operation,
+          payload: { cards },
+        }
+      : operation;
+  }
+
+  return operation;
 }
 
 function coalesceConsecutiveCardMoveBatches(operations: SyncOperation[]): OutboxWorkItem[] {
