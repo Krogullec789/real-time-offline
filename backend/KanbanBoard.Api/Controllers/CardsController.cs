@@ -3,6 +3,8 @@ using KanbanBoard.Api.DTOs;
 using KanbanBoard.Api.Hubs;
 using KanbanBoard.Api.Models;
 using KanbanBoard.Api.Services;
+using KanbanBoard.Api.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -10,8 +12,13 @@ using Microsoft.EntityFrameworkCore;
 namespace KanbanBoard.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
-public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILogger<CardsController> logger) : ControllerBase
+public class CardsController(
+    KanbanDbContext db,
+    IHubContext<KanbanHub> hub,
+    ILogger<CardsController> logger,
+    BoardAccessService boardAccess) : ControllerBase
 {
     [HttpPost]
     public async Task<ActionResult<CardDto>> Create(CreateCardRequest req)
@@ -23,9 +30,24 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
             .FirstOrDefaultAsync(c => c.Id == req.ColumnId);
 
         if (column is null) return NotFound("Column not found.");
+        if (!boardAccess.CanAccessBoard(User, column.BoardId)) return Forbid();
         if (!CardPriorityValidator.TryNormalize(req.Priority, out var priority))
         {
             return BadRequest(CardPriorityValidator.ErrorMessage);
+        }
+
+        if (req.Id is Guid requestedId)
+        {
+            var existing = await db.Cards
+                .Include(c => c.Column)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == requestedId);
+
+            if (existing is not null)
+            {
+                if (!boardAccess.CanAccessBoard(User, existing.Column.BoardId)) return Forbid();
+                return Ok(BoardsController.MapCard(existing));
+            }
         }
 
         var maxOrder = await db.Cards
@@ -61,8 +83,15 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<CardDto>> GetById(Guid id)
     {
-        var card = await db.Cards.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id);
-        return card is null ? NotFound() : Ok(BoardsController.MapCard(card));
+        var card = await db.Cards
+            .AsNoTracking()
+            .Include(c => c.Column)
+            .FirstOrDefaultAsync(c => c.Id == id);
+
+        if (card is null) return NotFound();
+        if (!boardAccess.CanAccessBoard(User, card.Column.BoardId)) return Forbid();
+
+        return Ok(BoardsController.MapCard(card));
     }
 
     [HttpPut("{id:guid}")]
@@ -76,6 +105,7 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
             .FirstOrDefaultAsync(c => c.Id == id);
 
         if (card is null) return NotFound();
+        if (!boardAccess.CanAccessBoard(User, card.Column.BoardId)) return Forbid();
         if (!CardPriorityValidator.TryNormalize(req.Priority, out var priority))
         {
             return BadRequest(CardPriorityValidator.ErrorMessage);
@@ -96,6 +126,7 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
             : await db.Columns.Include(c => c.Board).FirstOrDefaultAsync(c => c.Id == req.ColumnId);
 
         if (targetColumn is null) return BadRequest("Target column not found.");
+        if (!boardAccess.CanAccessBoard(User, targetColumn.BoardId)) return Forbid();
 
         var moveValidation = CardMoveValidator.ValidateTargetColumn(card.Column, targetColumn);
         if (!moveValidation.IsValid) return BadRequest(moveValidation.ErrorMessage);
@@ -129,7 +160,8 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
                 .ThenInclude(c => c.Board)
             .FirstOrDefaultAsync(c => c.Id == id);
 
-        if (card is null) return NotFound();
+        if (card is null) return NoContent();
+        if (!boardAccess.CanAccessBoard(User, card.Column.BoardId)) return Forbid();
 
         var boardId = card.Column.BoardId;
         var now = DateTime.UtcNow;
@@ -165,6 +197,7 @@ public class CardsController(KanbanDbContext db, IHubContext<KanbanHub> hub, ILo
         if (sourceBoardIds.Length != 1) return BadRequest("Batch moves cannot span multiple boards.");
 
         var boardId = sourceBoardIds[0];
+        if (!boardAccess.CanAccessBoard(User, boardId)) return Forbid();
         var targetColumnIds = requestedPositions.Select(p => p.ColumnId).ToHashSet();
         var targetColumns = await db.Columns
             .Include(c => c.Board)

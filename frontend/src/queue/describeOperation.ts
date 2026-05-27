@@ -16,5 +16,7 @@ export function describeSyncOperation(operation: SyncOperation): string {
       return 'Delete column';
     case 'BATCH_MOVE_CARDS':
       return `Move ${operation.payload.cards.length} cards`;
+    case 'BATCH_MOVE_COLUMNS':
+      return `Reorder ${operation.payload.columns.length} columns`;
   }
 }

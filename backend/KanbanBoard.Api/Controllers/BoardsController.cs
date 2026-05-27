@@ -1,17 +1,22 @@
 using KanbanBoard.Api.Data;
 using KanbanBoard.Api.DTOs;
+using KanbanBoard.Api.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace KanbanBoard.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
-public class BoardsController(KanbanDbContext db) : ControllerBase
+public class BoardsController(KanbanDbContext db, BoardAccessService boardAccess) : ControllerBase
 {
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<BoardDto>> GetBoard(Guid id)
     {
+        if (!boardAccess.CanAccessBoard(User, id)) return Forbid();
+
         var board = await db.Boards
             .AsNoTracking()
             .Include(b => b.Columns.OrderBy(c => c.Order))

@@ -1,12 +1,28 @@
 using KanbanBoard.Api.Data;
 using KanbanBoard.Api.Hubs;
+using KanbanBoard.Api.Security;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, ".keys")));
+builder.Services
+    .AddAuthentication(ApiKeyAuthenticationHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+        ApiKeyAuthenticationHandler.SchemeName,
+        options => { });
+builder.Services.AddAuthorization();
+builder.Services.AddScoped<BoardAccessService>();
 
 if (!builder.Environment.IsEnvironment("Testing"))
 {
@@ -38,7 +54,10 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+}
 
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("Database:ApplyMigrations"))
+{
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<KanbanDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
@@ -69,6 +88,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseRouting();
 app.UseCors("ClientApp");
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

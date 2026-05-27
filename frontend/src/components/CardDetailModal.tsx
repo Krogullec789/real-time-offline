@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Trash2, AlertCircle } from 'lucide-react';
 import { useBoardStore } from '../store';
 import type { Card } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
+import { useDialogFocus } from './useDialogFocus';
 
 interface Props {
   card: Card;
@@ -17,6 +18,9 @@ export function CardDetailModal({ card, onClose }: Props) {
   const [description, setDescription] = useState(card.description);
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>(card.priority);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useDialogFocus(dialogRef, !isDeleteDialogOpen, onClose);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -48,9 +52,17 @@ export function CardDetailModal({ card, onClose }: Props) {
   return (
     <>
       <div className="modal-backdrop" onClick={onClose}>
-        <div className="glass-panel modal-content" onClick={e => e.stopPropagation()}>
+        <div
+          ref={dialogRef}
+          className="glass-panel modal-content"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="card-detail-title"
+          tabIndex={-1}
+          onClick={e => e.stopPropagation()}
+        >
         <header className="modal-header">
-          <h3>Edit Task</h3>
+          <h3 id="card-detail-title">Edit Task</h3>
           <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">
             <X size={20} />
           </button>

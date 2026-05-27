@@ -1,5 +1,6 @@
 import type {
   BatchMoveCardsRequest,
+  BatchMoveColumnsRequest,
   BoardData,
   Card,
   CreateCardRequest,
@@ -10,6 +11,7 @@ import type {
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5212/api';
+const API_KEY = import.meta.env.VITE_API_KEY;
 
 class ApiError extends Error {
   response: Response;
@@ -20,7 +22,11 @@ class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const headers = { 'Content-Type': 'application/json', ...options?.headers };
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
+    ...options?.headers,
+  };
   const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
   
   if (!response.ok) {
@@ -44,6 +50,9 @@ export const updateColumn = (boardId: string, columnId: string, payload: UpdateC
 
 export const deleteColumn = (boardId: string, columnId: string) => 
   request<void>(`/boards/${boardId}/columns/${columnId}`, { method: 'DELETE' });
+
+export const batchMoveColumns = (boardId: string, payload: BatchMoveColumnsRequest) =>
+  request<Column[]>(`/boards/${boardId}/columns/batch-move`, { method: 'PUT', body: JSON.stringify(payload) });
 
 // Cards
 export const createCard = (payload: CreateCardRequest) =>

@@ -104,4 +104,65 @@ describe('board store offline behavior', () => {
       isSyncing: false,
     });
   });
+
+  it('uses the server version being edited as clientUpdatedAt for offline updates', async () => {
+    await useBoardStore.getState().initializeBoard(boardData);
+    await useBoardStore.getState().updateCard('card-1', { title: 'Offline edit' });
+
+    const db = await getDB();
+    const operations = await db.getAll('outbox');
+
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({
+      type: 'UPDATE_CARD',
+      payload: expect.objectContaining({
+        id: 'card-1',
+        clientUpdatedAt: '2026-05-08T10:00:00.000Z',
+      }),
+    });
+  });
+
+  it('keeps the original server base version across repeated offline edits', async () => {
+    await useBoardStore.getState().initializeBoard(boardData);
+    await useBoardStore.getState().updateCard('card-1', { title: 'First offline edit' });
+    await useBoardStore.getState().updateCard('card-1', { title: 'Second offline edit' });
+
+    const db = await getDB();
+    const operations = await db.getAll('outbox');
+
+    expect(operations).toHaveLength(2);
+    expect(operations.every((op) => (
+      op.type === 'UPDATE_CARD'
+      && op.payload.clientUpdatedAt === '2026-05-08T10:00:00.000Z'
+    ))).toBe(true);
+  });
+
+  it('preserves pending optimistic changes when a fresh server snapshot is initialized', async () => {
+    await useBoardStore.getState().initializeBoard(boardData);
+    await useBoardStore.getState().updateCard('card-1', { title: 'Offline edit survives' });
+
+    await useBoardStore.getState().initializeBoard({
+      ...boardData,
+      updatedAt: '2026-05-08T10:05:00.000Z',
+      columns: [
+        {
+          ...boardData.columns[0],
+          cards: [
+            {
+              ...boardData.columns[0].cards[0],
+              title: 'Server snapshot title',
+              updatedAt: '2026-05-08T10:05:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(useBoardStore.getState().cards).toContainEqual(
+      expect.objectContaining({
+        id: 'card-1',
+        title: 'Offline edit survives',
+      }),
+    );
+  });
 });

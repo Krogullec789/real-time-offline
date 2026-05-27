@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   BatchMoveCardsRequest,
+  BatchMoveColumnsRequest,
   Board,
   BoardData,
   Card,
@@ -8,7 +9,7 @@ import type {
   Column,
   ConnectionStatus,
 } from '../types';
-import { getDB, queueOfflineAction, syncDatabaseFromServer } from '../db';
+import { getDB, queueOfflineAction, syncDatabaseFromServer, type SyncOperation } from '../db';
 import {
   type OutboxStatus,
   processOutbox,
@@ -35,8 +36,10 @@ interface BoardState {
   updateColumn: (columnId: string, title: string) => Promise<void>;
   deleteColumn: (columnId: string) => Promise<void>;
   moveColumn: (columnId: string, newOrder: number) => Promise<void>;
+  refreshBoardFromServer: (boardId?: string) => Promise<void>;
   applyRemoteCardChange: (card: Card) => Promise<void>;
   applyRemoteColumnChange: (column: Column) => Promise<void>;
+  applyRemoteColumnsBatchUpdate: (columns: Column[]) => Promise<void>;
   applyRemoteCardDelete: (cardId: string) => Promise<void>;
   applyRemoteColumnDelete: (columnId: string) => Promise<void>;
   applyRemoteCardsBatchUpdate: (cards: Card[]) => Promise<void>;
@@ -57,6 +60,213 @@ async function persistCards(cards: Card[]) {
     await tx.store.put(card);
   }
   await tx.done;
+}
+
+async function readOutboxInOrder() {
+  const db = await getDB();
+  const operations = await db.getAll('outbox');
+  return operations.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+async function getPendingCardBaseUpdatedAt(cardId: string) {
+  const operations = await readOutboxInOrder();
+
+  for (const operation of operations) {
+    if (operation.type === 'UPDATE_CARD' && operation.payload.id === cardId) {
+      return operation.payload.clientUpdatedAt;
+    }
+
+    if (operation.type === 'BATCH_MOVE_CARDS') {
+      const pendingPosition = operation.payload.cards.find((position) => position.id === cardId);
+      if (pendingPosition) return pendingPosition.clientUpdatedAt;
+    }
+  }
+
+  return undefined;
+}
+
+async function mergeServerDataWithQueuedOperations(
+  serverBoard: Board,
+  serverColumns: Column[],
+  serverCards: Card[],
+) {
+  const db = await getDB();
+  const localColumns = new Map((await db.getAll('columns')).map((column) => [column.id, column]));
+  const localCards = new Map((await db.getAll('cards')).map((card) => [card.id, card]));
+  const operations = await readOutboxInOrder();
+
+  const board = serverBoard;
+  let columns = [...serverColumns];
+  let cards = [...serverCards];
+
+  for (const operation of operations) {
+    switch (operation.type) {
+      case 'CREATE_CARD': {
+        const localCard = operation.payload.id ? localCards.get(operation.payload.id) : undefined;
+        if (localCard && !cards.some((card) => card.id === localCard.id)) {
+          cards.push(localCard);
+        }
+        break;
+      }
+      case 'UPDATE_CARD':
+        cards = cards.map((card) => (
+          card.id === operation.payload.id
+            ? {
+                ...card,
+                columnId: operation.payload.columnId,
+                title: operation.payload.title,
+                description: operation.payload.description,
+                priority: operation.payload.priority,
+                order: operation.payload.order,
+                updatedAt: localCards.get(card.id)?.updatedAt ?? card.updatedAt,
+              }
+            : card
+        ));
+        break;
+      case 'DELETE_CARD':
+        cards = cards.filter((card) => card.id !== operation.payload.id);
+        break;
+      case 'BATCH_MOVE_CARDS': {
+        const positions = new Map(operation.payload.cards.map((position) => [position.id, position]));
+        cards = cards.map((card) => {
+          const position = positions.get(card.id);
+          return position
+            ? {
+                ...card,
+                columnId: position.columnId,
+                order: position.order,
+                updatedAt: localCards.get(card.id)?.updatedAt ?? card.updatedAt,
+              }
+            : card;
+        });
+        break;
+      }
+      case 'CREATE_COLUMN': {
+        const localColumn = operation.payload.id ? localColumns.get(operation.payload.id) : undefined;
+        if (localColumn && !columns.some((column) => column.id === localColumn.id)) {
+          columns.push(localColumn);
+        }
+        break;
+      }
+      case 'UPDATE_COLUMN':
+        columns = columns.map((column) => (
+          column.id === operation.payload.id
+            ? {
+                ...column,
+                title: operation.payload.title,
+                order: operation.payload.order,
+                updatedAt: localColumns.get(column.id)?.updatedAt ?? column.updatedAt,
+              }
+            : column
+        ));
+        break;
+      case 'BATCH_MOVE_COLUMNS': {
+        const positions = new Map(operation.payload.columns.map((position) => [position.id, position.order]));
+        columns = columns.map((column) => {
+          const order = positions.get(column.id);
+          return order === undefined
+            ? column
+            : {
+                ...column,
+                order,
+                updatedAt: localColumns.get(column.id)?.updatedAt ?? column.updatedAt,
+              };
+        });
+        break;
+      }
+      case 'DELETE_COLUMN':
+        columns = columns.filter((column) => column.id !== operation.payload.id);
+        cards = cards.filter((card) => card.columnId !== operation.payload.id);
+        break;
+    }
+  }
+
+  return { board, columns, cards };
+}
+
+async function reconcileSuccessfulOutboxOperation(operation: SyncOperation, result: unknown) {
+  if (operation.type === 'DELETE_CARD') {
+    useBoardStore.setState((state) => ({
+      cards: state.cards.filter((card) => card.id !== operation.payload.id),
+    }));
+    const db = await getDB();
+    await db.delete('cards', operation.payload.id);
+    return;
+  }
+
+  if (operation.type === 'DELETE_COLUMN') {
+    useBoardStore.setState((state) => ({
+      columns: state.columns.filter((column) => column.id !== operation.payload.id),
+      cards: state.cards.filter((card) => card.columnId !== operation.payload.id),
+    }));
+    return;
+  }
+
+  if (
+    operation.type === 'CREATE_CARD'
+    || operation.type === 'UPDATE_CARD'
+  ) {
+    const serverCard = result as Card | undefined;
+    if (!serverCard) return;
+
+    useBoardStore.setState((state) => ({
+      cards: [...state.cards.filter((card) => card.id !== serverCard.id), serverCard],
+    }));
+    await persistCards([serverCard]);
+    return;
+  }
+
+  if (operation.type === 'BATCH_MOVE_CARDS') {
+    const serverCards = result as Card[] | undefined;
+    if (!serverCards) return;
+
+    useBoardStore.setState((state) => ({
+      cards: [
+        ...state.cards.filter((card) => !serverCards.some((serverCard) => serverCard.id === card.id)),
+        ...serverCards,
+      ],
+    }));
+    await persistCards(serverCards);
+    return;
+  }
+
+  if (
+    operation.type === 'CREATE_COLUMN'
+    || operation.type === 'UPDATE_COLUMN'
+  ) {
+    const serverColumn = result as Column | undefined;
+    if (!serverColumn) return;
+
+    useBoardStore.setState((state) => ({
+      columns: [...state.columns.filter((column) => column.id !== serverColumn.id), serverColumn],
+    }));
+    const db = await getDB();
+    await db.put('columns', serverColumn);
+    return;
+  }
+
+  if (operation.type === 'BATCH_MOVE_COLUMNS') {
+    const serverColumns = result as Column[] | undefined;
+    if (!serverColumns) return;
+
+    useBoardStore.setState((state) => ({
+      columns: [
+        ...state.columns.filter((column) => !serverColumns.some((serverColumn) => serverColumn.id === column.id)),
+        ...serverColumns,
+      ],
+    }));
+
+    const db = await getDB();
+    const tx = db.transaction('columns', 'readwrite');
+    for (const column of serverColumns) {
+      await tx.store.put(column);
+    }
+    await tx.done;
+  }
+}
+
+function processStoreOutbox() {
+  return processOutbox(api, { onOperationSuccess: reconcileSuccessfulOutboxOperation });
 }
 
 export const useBoardStore = create<BoardState>((set, get) => ({
@@ -89,15 +299,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       updatedAt: boardData.updatedAt,
     };
 
+    const merged = await mergeServerDataWithQueuedOperations(board, parsedColumns, parsedCards);
+
     set({
       boardId: boardData.id,
-      board,
-      columns: parsedColumns,
-      cards: parsedCards,
+      board: merged.board,
+      columns: merged.columns,
+      cards: merged.cards,
     });
 
-    await syncDatabaseFromServer([board], parsedColumns, parsedCards);
-    void processOutbox(api);
+    await syncDatabaseFromServer([merged.board], merged.columns, merged.cards);
+    void processStoreOutbox();
   },
 
   addCard: async (columnId, title, priority) => {
@@ -136,7 +348,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
 
     await publishOutboxStatus();
-    void processOutbox(api);
+    void processStoreOutbox();
   },
 
   updateCard: async (cardId, updates) => {
@@ -144,6 +356,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (!oldCard) return;
 
     const now = new Date().toISOString();
+    const baseUpdatedAt = await getPendingCardBaseUpdatedAt(cardId) ?? oldCard.updatedAt;
     const updatedCard = { ...oldCard, ...updates, updatedAt: now };
 
     set((state) => ({
@@ -162,13 +375,13 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         description: updatedCard.description,
         priority: updatedCard.priority,
         order: updatedCard.order,
-        clientUpdatedAt: now
+        clientUpdatedAt: baseUpdatedAt
       },
       timestamp: now,
     });
 
     await publishOutboxStatus();
-    void processOutbox(api);
+    void processStoreOutbox();
   },
 
   deleteCard: async (cardId) => {
@@ -187,7 +400,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
 
     await publishOutboxStatus();
-    void processOutbox(api);
+    void processStoreOutbox();
   },
 
   moveCard: async (cardId, newColumnId, newOrder) => {
@@ -199,7 +412,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
 
     const now = new Date().toISOString();
     const positionById = new Map(positions.map((position) => [position.id, position]));
-    const updatedCards = get().cards
+    const cardsBeforeMove = get().cards;
+    const updatedCards = cardsBeforeMove
       .filter((card) => positionById.has(card.id))
       .map((card) => {
         const position = positionById.get(card.id);
@@ -220,12 +434,14 @@ export const useBoardStore = create<BoardState>((set, get) => ({
 
     await persistCards(updatedCards);
 
-    const payload: BatchMoveCardsRequest = {
-      cards: positions.map((position) => ({
-        ...position,
-        clientUpdatedAt: now,
-      })),
-    };
+    const cardsById = new Map(cardsBeforeMove.map((card) => [card.id, card]));
+    const cardsWithBaseVersions = await Promise.all(positions.map(async (position) => ({
+      ...position,
+      clientUpdatedAt: await getPendingCardBaseUpdatedAt(position.id)
+        ?? cardsById.get(position.id)?.updatedAt
+        ?? now,
+    })));
+    const payload: BatchMoveCardsRequest = { cards: cardsWithBaseVersions };
 
     await queueOfflineAction({
       id: createId(),
@@ -235,7 +451,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
 
     await publishOutboxStatus();
-    void processOutbox(api);
+    void processStoreOutbox();
   },
 
   addColumn: async (title) => {
@@ -266,7 +482,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
 
     await publishOutboxStatus();
-    void processOutbox(api);
+    void processStoreOutbox();
   },
 
   updateColumn: async (columnId, title) => {
@@ -295,7 +511,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
 
     await publishOutboxStatus();
-    void processOutbox(api);
+    void processStoreOutbox();
   },
 
   deleteColumn: async (columnId) => {
@@ -322,7 +538,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
 
     await publishOutboxStatus();
-    void processOutbox(api);
+    void processStoreOutbox();
   },
 
   moveColumn: async (columnId, newOrder) => {
@@ -355,17 +571,27 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }
     await tx.done;
 
-    for (const col of updatedColumns) {
-      await queueOfflineAction({
-        id: createId(),
-        type: 'UPDATE_COLUMN',
-        payload: { id: col.id, boardId, title: col.title, order: col.order },
-        timestamp: now,
-      });
-    }
+    const payload: BatchMoveColumnsRequest = {
+      columns: updatedColumns.map((col) => ({ id: col.id, order: col.order })),
+    };
+
+    await queueOfflineAction({
+      id: createId(),
+      type: 'BATCH_MOVE_COLUMNS',
+      payload: { boardId, ...payload },
+      timestamp: now,
+    });
 
     await publishOutboxStatus();
-    void processOutbox(api);
+    void processStoreOutbox();
+  },
+
+  refreshBoardFromServer: async (boardId) => {
+    const currentBoardId = boardId ?? get().boardId;
+    if (!currentBoardId) return;
+
+    const data = await api.fetchBoard(currentBoardId);
+    await get().initializeBoard(data);
   },
 
   applyRemoteCardChange: async (remoteCard) => {
@@ -418,6 +644,30 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     await db.put('columns', remoteColumn);
   },
 
+  applyRemoteColumnsBatchUpdate: async (remoteColumns) => {
+    set((state) => {
+      let nextColumns = [...state.columns];
+      for (const remoteColumn of remoteColumns) {
+        const existing = nextColumns.find((column) => column.id === remoteColumn.id);
+        if (existing && new Date(existing.updatedAt).getTime() > new Date(remoteColumn.updatedAt).getTime()) {
+          continue;
+        }
+
+        nextColumns = nextColumns.filter((column) => column.id !== remoteColumn.id);
+        nextColumns.push(remoteColumn);
+      }
+
+      return { columns: nextColumns };
+    });
+
+    const db = await getDB();
+    const tx = db.transaction('columns', 'readwrite');
+    for (const column of remoteColumns) {
+      await tx.store.put(column);
+    }
+    await tx.done;
+  },
+
   applyRemoteCardDelete: async (cardId) => {
     set((state) => ({ cards: state.cards.filter((card) => card.id !== cardId) }));
     const db = await getDB();
@@ -446,7 +696,7 @@ subscribeOutboxStatus((outboxStatus) => {
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     useBoardStore.getState().setConnectionStatus('online');
-    void processOutbox(api);
+    void processStoreOutbox();
   });
 
   window.addEventListener('offline', () => {

@@ -1,6 +1,7 @@
 import { getDB, type SyncOperation } from '../db';
 import type {
   BatchMoveCardsRequest,
+  BatchMoveColumnsRequest,
   Card,
   Column,
   CreateCardRequest,
@@ -36,8 +37,13 @@ export type ApiClient = {
   batchMoveCards: (payload: BatchMoveCardsRequest) => Promise<Card[]>;
   createColumn: (boardId: string, payload: CreateColumnRequest) => Promise<Column>;
   updateColumn: (boardId: string, columnId: string, payload: UpdateColumnRequest) => Promise<Column>;
+  batchMoveColumns: (boardId: string, payload: BatchMoveColumnsRequest) => Promise<Column[]>;
   deleteColumn: (boardId: string, columnId: string) => Promise<void>;
 };
+
+export interface ProcessOutboxOptions {
+  onOperationSuccess?: (operation: SyncOperation, result: unknown) => Promise<void> | void;
+}
 
 function isApiErrorWithStatus(error: unknown, status: number) {
   return error instanceof Error
@@ -73,7 +79,7 @@ export function subscribeOutboxStatus(listener: (status: OutboxStatus) => void) 
   };
 }
 
-export async function processOutbox(apiClient: ApiClient) {
+export async function processOutbox(apiClient: ApiClient, options: ProcessOutboxOptions = {}) {
   if (isSyncing) {
     await publishOutboxStatus();
     return;
@@ -93,7 +99,10 @@ export async function processOutbox(apiClient: ApiClient) {
     const outboxStore = tx.objectStore('outbox');
     
     // Sort by timestamp is crucial for consistency
-    const pendingOps = await outboxStore.index('by-status').getAll('pending');
+    const pendingOps = [
+      ...await outboxStore.index('by-status').getAll('pending'),
+      ...await outboxStore.index('by-status').getAll('failed'),
+    ];
     pendingOps.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const workItems = coalesceRepeatedCardUpdates(coalesceConsecutiveCardMoveBatches(pendingOps));
 
@@ -117,6 +126,8 @@ export async function processOutbox(apiClient: ApiClient) {
           const createdCard = result as Card;
           createdCardVersions.set(createdCard.id, createdCard.updatedAt);
         }
+
+        await options.onOperationSuccess?.(op, result);
         
         // Success: remove from outbox
         for (const operationId of workItem.operationIds) {
@@ -126,8 +137,13 @@ export async function processOutbox(apiClient: ApiClient) {
       } catch (err: unknown) {
         console.error('Failed to sync offline operation', op, err);
         
-        // Handle last-write-wins 409 conflict
-        if (isApiErrorWithStatus(err, 409)) {
+        if (isDeleteOperation(op) && isApiErrorWithStatus(err, 404)) {
+          for (const operationId of workItem.operationIds) {
+            await db.delete('outbox', operationId);
+          }
+          await options.onOperationSuccess?.(op, undefined);
+          await publishOutboxStatus();
+        } else if (isApiErrorWithStatus(err, 409)) {
           console.warn('Conflict detected, server version is ahead. Marking offline operation as failed.');
           op.status = 'failed';
           op.retryCount += 1;
@@ -280,11 +296,17 @@ async function executeOperation(op: SyncOperation, api: ApiClient) {
       return api.createColumn(op.payload.boardId, op.payload);
     case 'UPDATE_COLUMN':
       return api.updateColumn(op.payload.boardId, op.payload.id, op.payload);
+    case 'BATCH_MOVE_COLUMNS':
+      return api.batchMoveColumns(op.payload.boardId, { columns: op.payload.columns });
     case 'DELETE_COLUMN':
       return api.deleteColumn(op.payload.boardId, op.payload.id);
     default:
       return undefined;
   }
+}
+
+function isDeleteOperation(operation: SyncOperation) {
+  return operation.type === 'DELETE_CARD' || operation.type === 'DELETE_COLUMN';
 }
 
 // Global listener setup helper

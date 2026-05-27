@@ -5,7 +5,7 @@ import type { Column, Card } from '../types';
 import { KanbanCard } from './KanbanCard';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useBoardStore } from '../store';
-import { Plus, Trash2, GripVertical } from 'lucide-react';
+import { Plus, Trash2, GripVertical, Pencil } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface Props {
@@ -104,6 +104,14 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
         <span className="column-card-count">{cards.length}</span>
         
         <div className="column-actions">
+          <button
+            className="column-action-btn"
+            onClick={() => setIsEditingTitle(true)}
+            title="Rename column"
+            aria-label={`Rename ${column.title}`}
+          >
+            <Pencil size={14} />
+          </button>
           <button className="column-action-btn delete-btn" onClick={() => setIsDeleteDialogOpen(true)} title="Delete column">
             <Trash2 size={14} />
           </button>

@@ -1,6 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type {
   BatchMoveCardsRequest,
+  BatchMoveColumnsOperation,
   Board,
   Card,
   Column,
@@ -26,6 +27,7 @@ export type SyncOperation =
   | SyncOperationBase<'UPDATE_CARD', UpdateCardRequest>
   | SyncOperationBase<'DELETE_CARD', DeleteCardOperation>
   | SyncOperationBase<'BATCH_MOVE_CARDS', BatchMoveCardsRequest>
+  | SyncOperationBase<'BATCH_MOVE_COLUMNS', BatchMoveColumnsOperation>
   | SyncOperationBase<'CREATE_COLUMN', CreateColumnOperation>
   | SyncOperationBase<'UPDATE_COLUMN', UpdateColumnRequest>
   | SyncOperationBase<'DELETE_COLUMN', DeleteColumnOperation>;

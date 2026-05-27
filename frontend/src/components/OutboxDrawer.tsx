@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useBoardStore } from '../store';
 import { getDB, type SyncOperation } from '../db';
 import { X, RefreshCw, Trash2, Clock, CheckCircle2, AlertTriangle, ArrowRightLeft } from 'lucide-react';
@@ -6,6 +6,7 @@ import { processOutbox } from '../queue';
 import { describeSyncOperation } from '../queue/describeOperation';
 import { ConfirmDialog } from './ConfirmDialog';
 import * as api from '../api';
+import { useDialogFocus } from './useDialogFocus';
 
 interface Props {
   isOpen: boolean;
@@ -17,6 +18,9 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
   const connectionStatus = useBoardStore(s => s.connectionStatus);
   const [operations, setOperations] = useState<SyncOperation[]>([]);
   const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+
+  useDialogFocus(drawerRef, isOpen && !isClearDialogOpen, onClose);
 
   useEffect(() => {
     async function loadOperations() {
@@ -73,6 +77,7 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
       case 'DELETE_COLUMN':
         return <span className="op-badge op-delete">DELETE</span>;
       case 'BATCH_MOVE_CARDS':
+      case 'BATCH_MOVE_COLUMNS':
         return <span className="op-badge op-move">MOVE BATCH</span>;
       default:
         return <span className="op-badge op-other">{type}</span>;
@@ -82,10 +87,18 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose}>
-        <aside className="glass-panel outbox-drawer" onClick={e => e.stopPropagation()}>
+        <aside
+          ref={drawerRef}
+          className="glass-panel outbox-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="outbox-drawer-title"
+          tabIndex={-1}
+          onClick={e => e.stopPropagation()}
+        >
         <header className="drawer-header">
           <div className="drawer-title-group">
-            <h3>Offline Sync Outbox</h3>
+            <h3 id="outbox-drawer-title">Offline Sync Outbox</h3>
             <div className={`connection-badge status-${connectionStatus}`}>
               <span className={`status-dot ${connectionStatus}`} />
               <span>{connectionStatus === 'online' ? 'Online' : 'Offline Mode'}</span>

@@ -16,6 +16,7 @@ function createApiClient(overrides: Partial<ApiClient>): ApiClient {
     batchMoveCards: vi.fn(),
     createColumn: vi.fn(),
     updateColumn: vi.fn(),
+    batchMoveColumns: vi.fn(),
     deleteColumn: vi.fn(),
     ...overrides,
   } as ApiClient;
@@ -64,6 +65,84 @@ describe('processOutbox', () => {
       status: 'failed',
       retryCount: 1,
     });
+  });
+
+  it('retries failed operations when sync is requested again', async () => {
+    const db = await getDB();
+    await db.put('outbox', {
+      id: 'op-1',
+      type: 'DELETE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      payload: { id: 'card-1' },
+      status: 'failed',
+      retryCount: 3,
+    });
+
+    const deleteCard = vi.fn().mockResolvedValue(undefined);
+
+    await processOutbox(createApiClient({ deleteCard }));
+
+    expect(deleteCard).toHaveBeenCalledWith('card-1');
+    await expect(db.getAll('outbox')).resolves.toEqual([]);
+  });
+
+  it('treats repeated deletes that return 404 as already synced', async () => {
+    await queueOfflineAction({
+      id: 'delete-1',
+      type: 'DELETE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      payload: { id: 'card-1' },
+    });
+
+    const notFound = new Error('Not found');
+    Object.assign(notFound, {
+      response: new Response(null, { status: 404 }),
+    });
+
+    await processOutbox(createApiClient({
+      deleteCard: vi.fn().mockRejectedValue(notFound),
+    }));
+
+    const db = await getDB();
+    await expect(db.getAll('outbox')).resolves.toEqual([]);
+  });
+
+  it('notifies callers with the authoritative API response before removing successful operations', async () => {
+    await queueOfflineAction({
+      id: 'edit-1',
+      type: 'UPDATE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      payload: {
+        id: 'card-a',
+        columnId: 'todo',
+        title: 'Edited title',
+        description: '',
+        priority: 'medium',
+        order: 0,
+        clientUpdatedAt: '2026-05-25T09:00:00.000Z',
+      },
+    });
+
+    const serverCard = {
+      id: 'card-a',
+      columnId: 'todo',
+      title: 'Edited title',
+      description: '',
+      priority: 'medium' as const,
+      order: 0,
+      updatedAt: '2026-05-25T10:02:00.000Z',
+    };
+    const onOperationSuccess = vi.fn();
+
+    await processOutbox(
+      createApiClient({ updateCard: vi.fn().mockResolvedValue(serverCard) }),
+      { onOperationSuccess },
+    );
+
+    expect(onOperationSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'edit-1', type: 'UPDATE_CARD' }),
+      serverCard,
+    );
   });
 
   it('coalesces consecutive card move batches before syncing them', async () => {

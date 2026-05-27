@@ -14,6 +14,12 @@ public record UpdateColumnRequest(
     [param: Required, StringLength(200, MinimumLength = 1)] string Title,
     [param: Range(0, int.MaxValue)] int Order);
 
+public record BatchMoveColumnsRequest(IEnumerable<ColumnPositionDto> Columns);
+
+public record ColumnPositionDto(
+    Guid Id,
+    [param: Range(0, int.MaxValue)] int Order);
+
 public record CardDto(Guid Id, Guid ColumnId, string Title, string Description, string Priority, int Order, DateTime UpdatedAt);
 
 public record CreateCardRequest(

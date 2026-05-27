@@ -24,8 +24,11 @@ services:
     ports:
       - "5212:5212"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
+      - Database__ApplyMigrations=true
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=kanban;Username=postgres;Password=postgres
+      - Auth__ApiKey=dev-demo-key
+      - Auth__AllowedBoardIds__0=00000000-0000-0000-0000-000000000001
       - Cors__AllowedOrigins__0=http://localhost:3000
     depends_on:
       db:
@@ -36,9 +39,10 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
       args:
-        - VITE_API_BASE_URL=http://localhost:5212/api
-        - VITE_SIGNALR_URL=http://localhost:5212/hubs/kanban
+        - VITE_API_BASE_URL=/api
+        - VITE_SIGNALR_URL=/hubs/kanban
         - VITE_BOARD_ID=00000000-0000-0000-0000-000000000001
+        - VITE_API_KEY=dev-demo-key
     container_name: kanban-frontend-spa
     ports:
       - "3000:80"

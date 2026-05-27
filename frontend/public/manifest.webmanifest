@@ -1,0 +1,17 @@
+{
+  "name": "Real-Time Offline Kanban",
+  "short_name": "Offline Kanban",
+  "description": "Offline-first collaborative kanban board with realtime sync.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f8fb",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

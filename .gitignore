@@ -12,6 +12,7 @@ backend/**/bin/
 backend/**/obj/
 backend/.test-bin/
 backend/TestResults/
+backend/KanbanBoard.Api/.keys/
 
 # Logs
 *.log

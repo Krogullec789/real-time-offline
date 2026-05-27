@@ -49,6 +49,19 @@ export interface UpdateColumnRequest {
   order: number;
 }
 
+export interface ColumnPositionRequest {
+  id: string;
+  order: number;
+}
+
+export interface BatchMoveColumnsRequest {
+  columns: ColumnPositionRequest[];
+}
+
+export interface BatchMoveColumnsOperation extends BatchMoveColumnsRequest {
+  boardId: string;
+}
+
 export interface DeleteColumnOperation {
   id: string;
   boardId: string;

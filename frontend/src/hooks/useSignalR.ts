@@ -4,6 +4,7 @@ import { useBoardStore } from '../store';
 import { leaveBoardAndStop } from './signalRConnection';
 
 const SIGNALR_URL = import.meta.env.VITE_SIGNALR_URL ?? 'http://localhost:5212/hubs/kanban';
+const API_KEY = import.meta.env.VITE_API_KEY;
 
 export function useSignalR(boardId: string | null) {
   const connection = useRef<signalR.HubConnection | null>(null);
@@ -11,16 +12,20 @@ export function useSignalR(boardId: string | null) {
   const applyRemoteCardChange = useBoardStore(s => s.applyRemoteCardChange);
   const applyRemoteCardsBatchUpdate = useBoardStore(s => s.applyRemoteCardsBatchUpdate);
   const applyRemoteColumnChange = useBoardStore(s => s.applyRemoteColumnChange);
+  const applyRemoteColumnsBatchUpdate = useBoardStore(s => s.applyRemoteColumnsBatchUpdate);
   const applyRemoteCardDelete = useBoardStore(s => s.applyRemoteCardDelete);
   const applyRemoteColumnDelete = useBoardStore(s => s.applyRemoteColumnDelete);
+  const refreshBoardFromServer = useBoardStore(s => s.refreshBoardFromServer);
   const setConnectionStatus = useBoardStore(s => s.setConnectionStatus);
 
   useEffect(() => {
     if (!boardId) return;
 
     // Build connection
-    const newConnection = new signalR.HubConnectionBuilder()
-      .withUrl(SIGNALR_URL)
+    const connectionBuilder = new signalR.HubConnectionBuilder();
+    const newConnection = (API_KEY
+      ? connectionBuilder.withUrl(SIGNALR_URL, { accessTokenFactory: () => API_KEY })
+      : connectionBuilder.withUrl(SIGNALR_URL))
       .withAutomaticReconnect()
       .build();
 
@@ -34,6 +39,7 @@ export function useSignalR(boardId: string | null) {
     newConnection.onreconnected(async () => {
       setConnectionStatus('online');
       await newConnection.invoke('JoinBoard', boardId);
+      await refreshBoardFromServer(boardId);
     });
 
     newConnection.onclose(() => {
@@ -48,6 +54,7 @@ export function useSignalR(boardId: string | null) {
     
     newConnection.on('ColumnCreated', applyRemoteColumnChange);
     newConnection.on('ColumnUpdated', applyRemoteColumnChange);
+    newConnection.on('ColumnsBatchMoved', applyRemoteColumnsBatchUpdate);
     newConnection.on('ColumnDeleted', applyRemoteColumnDelete);
 
     // Connect
@@ -81,9 +88,11 @@ export function useSignalR(boardId: string | null) {
     boardId, 
     applyRemoteCardChange, 
     applyRemoteColumnChange, 
+    applyRemoteColumnsBatchUpdate,
     applyRemoteCardDelete, 
     applyRemoteColumnDelete,
     applyRemoteCardsBatchUpdate, 
+    refreshBoardFromServer,
     setConnectionStatus
   ]);
 }
