@@ -73,6 +73,9 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
         ref={setNodeRef}
         style={style}
         className="glass-panel kanban-column"
+        data-testid="kanban-column"
+        data-column-id={column.id}
+        data-column-title={column.title}
       >
       <div className="column-header">
         <div className="column-drag-handle" {...attributes} {...listeners} title="Drag column">
@@ -112,7 +115,12 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
           >
             <Pencil size={14} />
           </button>
-          <button className="column-action-btn delete-btn" onClick={() => setIsDeleteDialogOpen(true)} title="Delete column">
+          <button
+            className="column-action-btn delete-btn"
+            onClick={() => setIsDeleteDialogOpen(true)}
+            title="Delete column"
+            aria-label={`Delete ${column.title}`}
+          >
             <Trash2 size={14} />
           </button>
         </div>
@@ -144,7 +152,11 @@ export function KanbanColumn({ column, cards, onSelectCard }: Props) {
             />
           </form>
         ) : (
-          <button className="add-card-btn" onClick={() => setIsAdding(true)}>
+          <button
+            className="add-card-btn"
+            onClick={() => setIsAdding(true)}
+            aria-label={`Add card to ${column.title}`}
+          >
             <Plus size={18} />
             <span>Add a card</span>
           </button>

@@ -6,6 +6,9 @@ frontend/dist/
 frontend/dist-ssr/
 frontend/*.local
 frontend/node_modules/.tmp/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
 
 # .NET build outputs
 backend/**/bin/

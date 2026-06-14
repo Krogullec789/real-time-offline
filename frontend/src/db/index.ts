@@ -20,6 +20,12 @@ interface SyncOperationBase<TType extends string, TPayload> {
   timestamp: string; // ISO string
   status: 'pending' | 'syncing' | 'failed';
   retryCount: number;
+  lastError?: string;
+  conflict?: {
+    message: string;
+    serverCard?: Card;
+    serverCards?: Card[];
+  };
 }
 
 export type SyncOperation =

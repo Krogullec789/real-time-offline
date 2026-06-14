@@ -26,6 +26,7 @@ interface BoardState {
   connectionStatus: ConnectionStatus;
   outboxStatus: OutboxStatus;
   setConnectionStatus: (status: ConnectionStatus) => void;
+  syncNow: () => Promise<void>;
   initializeBoard: (boardData: BoardData) => Promise<void>;
   addCard: (columnId: string, title: string, priority?: 'low' | 'medium' | 'high') => Promise<void>;
   updateCard: (cardId: string, updates: Partial<Card>) => Promise<void>;
@@ -283,6 +284,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
+
+  syncNow: async () => {
+    await processStoreOutbox();
+  },
 
   initializeBoard: async (boardData) => {
     const parsedColumns = boardData.columns.map((column) => ({

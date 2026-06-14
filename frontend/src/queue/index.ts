@@ -51,6 +51,18 @@ function isApiErrorWithStatus(error: unknown, status: number) {
     && (error as { response?: Response }).response?.status === status;
 }
 
+async function readApiErrorPayload(error: unknown) {
+  if (!(error instanceof Error) || !('response' in error)) return null;
+  const response = (error as { response?: Response }).response;
+  if (!response) return null;
+
+  try {
+    return await response.clone().json() as unknown;
+  } catch {
+    return null;
+  }
+}
+
 export async function getOutboxStatus(): Promise<OutboxStatus> {
   const db = await getDB();
   const operations = await db.getAll('outbox');
@@ -136,8 +148,6 @@ export async function processOutbox(apiClient: ApiClient, options: ProcessOutbox
         }
         await publishOutboxStatus();
       } catch (err: unknown) {
-        console.error('Failed to sync offline operation', op, err);
-        
         if (isDeleteOperation(op) && isApiErrorWithStatus(err, 404)) {
           for (const operationId of workItem.operationIds) {
             await db.delete('outbox', operationId);
@@ -145,15 +155,21 @@ export async function processOutbox(apiClient: ApiClient, options: ProcessOutbox
           await options.onOperationSuccess?.(op, undefined);
           await publishOutboxStatus();
         } else if (isApiErrorWithStatus(err, 409)) {
-          console.warn('Conflict detected, server version is ahead. Marking offline operation as failed.');
+          console.warn('Conflict detected while syncing offline operation. Marking it for user resolution.', op);
+          const conflictPayload = await readApiErrorPayload(err);
           op.status = 'failed';
           op.retryCount += 1;
+          op.lastError = 'Conflict: server has a newer version.';
+          op.conflict = normalizeConflictPayload(conflictPayload);
           await db.put('outbox', op);
           await publishOutboxStatus();
         } else {
+          console.error('Failed to sync offline operation', op, err);
           // General network error or something else - let's retry later
           op.status = 'pending';
           op.retryCount += 1;
+          op.lastError = err instanceof Error ? err.message : 'Failed to sync offline operation.';
+          op.conflict = undefined;
           
           if (op.retryCount > 10) {
               op.status = 'failed';
@@ -412,6 +428,93 @@ async function executeOperation(op: SyncOperation, api: ApiClient) {
 
 function isDeleteOperation(operation: SyncOperation) {
   return operation.type === 'DELETE_CARD' || operation.type === 'DELETE_COLUMN';
+}
+
+function normalizeConflictPayload(payload: unknown): SyncOperation['conflict'] {
+  if (typeof payload !== 'object' || payload === null) {
+    return { message: 'Conflict: server has a newer version.' };
+  }
+
+  const conflictPayload = payload as {
+    message?: unknown;
+    serverCard?: unknown;
+    serverCards?: unknown;
+  };
+
+  const message = typeof conflictPayload.message === 'string'
+    ? conflictPayload.message
+    : 'Conflict: server has a newer version.';
+
+  const serverCard = isCard(conflictPayload.serverCard) ? conflictPayload.serverCard : undefined;
+  const serverCards = Array.isArray(conflictPayload.serverCards)
+    ? conflictPayload.serverCards.filter(isCard)
+    : undefined;
+
+  return {
+    message,
+    ...(serverCard ? { serverCard } : {}),
+    ...(serverCards && serverCards.length > 0 ? { serverCards } : {}),
+  };
+}
+
+function isCard(value: unknown): value is Card {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as Card).id === 'string'
+    && typeof (value as Card).columnId === 'string'
+    && typeof (value as Card).title === 'string'
+    && typeof (value as Card).updatedAt === 'string';
+}
+
+export async function keepServerConflict(operation: SyncOperation) {
+  const db = await getDB();
+  await db.delete('outbox', operation.id);
+  await publishOutboxStatus();
+}
+
+export async function retryOperationWithServerVersion(operation: SyncOperation) {
+  const rebasedOperation = rebaseOperationOnServerVersion(operation);
+  if (!rebasedOperation) return;
+
+  const db = await getDB();
+  await db.put('outbox', {
+    ...rebasedOperation,
+    status: 'pending',
+    retryCount: 0,
+    lastError: undefined,
+    conflict: undefined,
+  });
+  await publishOutboxStatus();
+}
+
+function rebaseOperationOnServerVersion(operation: SyncOperation): SyncOperation | null {
+  if (operation.type === 'UPDATE_CARD' && operation.conflict?.serverCard) {
+    return {
+      ...operation,
+      payload: {
+        ...operation.payload,
+        clientUpdatedAt: operation.conflict.serverCard.updatedAt,
+      },
+    };
+  }
+
+  if (operation.type === 'BATCH_MOVE_CARDS' && operation.conflict?.serverCards) {
+    const serverUpdatedAtByCardId = new Map(
+      operation.conflict.serverCards.map((card) => [card.id, card.updatedAt]),
+    );
+
+    return {
+      ...operation,
+      payload: {
+        cards: operation.payload.cards.map((position) => ({
+          ...position,
+          clientUpdatedAt: serverUpdatedAtByCardId.get(position.id) ?? position.clientUpdatedAt,
+        })),
+      },
+    };
+  }
+
+  return null;
 }
 
 // Global listener setup helper

@@ -5,6 +5,9 @@ import { leaveBoardAndStop } from './signalRConnection';
 
 const SIGNALR_URL = import.meta.env.VITE_SIGNALR_URL ?? 'http://localhost:5212/hubs/kanban';
 const API_KEY = import.meta.env.VITE_API_KEY;
+const SIGNALR_LOG_LEVEL = import.meta.env.VITE_SIGNALR_LOG_LEVEL === 'none'
+  ? signalR.LogLevel.None
+  : signalR.LogLevel.Warning;
 
 export function useSignalR(boardId: string | null) {
   const connection = useRef<signalR.HubConnection | null>(null);
@@ -27,6 +30,7 @@ export function useSignalR(boardId: string | null) {
       ? connectionBuilder.withUrl(SIGNALR_URL, { accessTokenFactory: () => API_KEY })
       : connectionBuilder.withUrl(SIGNALR_URL))
       .withAutomaticReconnect()
+      .configureLogging(SIGNALR_LOG_LEVEL)
       .build();
 
     connection.current = newConnection;

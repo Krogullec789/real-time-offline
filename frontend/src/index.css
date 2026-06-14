@@ -892,6 +892,73 @@ button {
 .op-status-syncing { color: #2dd4bf; }
 .op-status-failed { color: #f87171; }
 
+.conflict-panel {
+  margin-top: 6px;
+  padding: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conflict-panel-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #fbbf24;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.conflict-message {
+  color: #f8d98a;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.conflict-comparison {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.conflict-comparison > div {
+  padding: 9px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.conflict-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.conflict-comparison p {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.conflict-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.conflict-actions button {
+  justify-content: center;
+  min-width: 0;
+  padding-inline: 10px;
+}
+
 .spin {
   animation: spin 1s linear infinite;
 }

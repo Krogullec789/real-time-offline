@@ -42,6 +42,9 @@ export function KanbanCard({ card, isOverlay, onSelect }: Props) {
       ref={setNodeRef}
       style={style}
       className={`glass-card kanban-card ${isOverlay ? 'drag-overlay-item' : ''}`}
+      data-testid="kanban-card"
+      data-card-id={card.id}
+      data-card-title={card.title}
       {...attributes}
       {...listeners}
       onClick={(e) => {
@@ -65,6 +68,7 @@ export function KanbanCard({ card, isOverlay, onSelect }: Props) {
               onSelect?.();
             }}
             title="Edit card"
+            aria-label={`Edit ${card.title}`}
           >
             <Edit2 size={12} />
           </button>

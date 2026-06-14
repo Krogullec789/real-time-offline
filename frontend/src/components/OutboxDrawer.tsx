@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBoardStore } from '../store';
 import { getDB, type SyncOperation } from '../db';
 import { X, RefreshCw, Trash2, Clock, CheckCircle2, AlertTriangle, ArrowRightLeft } from 'lucide-react';
-import { processOutbox } from '../queue';
+import {
+  keepServerConflict,
+  retryOperationWithServerVersion,
+} from '../queue';
 import { describeSyncOperation } from '../queue/describeOperation';
 import { ConfirmDialog } from './ConfirmDialog';
-import * as api from '../api';
 import { useDialogFocus } from './useDialogFocus';
 
 interface Props {
@@ -16,32 +18,57 @@ interface Props {
 export function OutboxDrawer({ isOpen, onClose }: Props) {
   const outboxStatus = useBoardStore(s => s.outboxStatus);
   const connectionStatus = useBoardStore(s => s.connectionStatus);
+  const syncNow = useBoardStore(s => s.syncNow);
+  const applyRemoteCardChange = useBoardStore(s => s.applyRemoteCardChange);
+  const applyRemoteCardsBatchUpdate = useBoardStore(s => s.applyRemoteCardsBatchUpdate);
   const [operations, setOperations] = useState<SyncOperation[]>([]);
   const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
   const drawerRef = useRef<HTMLElement>(null);
 
   useDialogFocus(drawerRef, isOpen && !isClearDialogOpen, onClose);
 
-  useEffect(() => {
-    async function loadOperations() {
-      try {
-        const db = await getDB();
-        const ops = await db.getAll('outbox');
-        // Execution order: oldest first
-        ops.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        setOperations(ops);
-      } catch (err) {
-        console.error("Failed to load outbox operations", err);
-      }
+  const loadOperations = useCallback(async () => {
+    try {
+      const db = await getDB();
+      const ops = await db.getAll('outbox');
+      // Execution order: oldest first
+      ops.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      setOperations(ops);
+    } catch (err) {
+      console.error("Failed to load outbox operations", err);
     }
+  }, []);
 
-    if (isOpen) {
-      loadOperations();
-    }
-  }, [isOpen, outboxStatus]);
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const refreshId = window.setTimeout(() => {
+      void loadOperations();
+    }, 0);
+
+    return () => window.clearTimeout(refreshId);
+  }, [isOpen, outboxStatus, loadOperations]);
 
   const handleSyncNow = () => {
-    void processOutbox(api);
+    void syncNow();
+  };
+
+  const handleKeepServer = async (operation: SyncOperation) => {
+    if (operation.conflict?.serverCard) {
+      await applyRemoteCardChange(operation.conflict.serverCard);
+    }
+    if (operation.conflict?.serverCards) {
+      await applyRemoteCardsBatchUpdate(operation.conflict.serverCards);
+    }
+
+    await keepServerConflict(operation);
+    await loadOperations();
+  };
+
+  const handleRetryMine = async (operation: SyncOperation) => {
+    await retryOperationWithServerVersion(operation);
+    await loadOperations();
+    await syncNow();
   };
 
   const handleClearOutbox = async () => {
@@ -171,6 +198,14 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
                       )}
                     </span>
                   </div>
+
+                  {op.status === 'failed' && op.conflict && (
+                    <ConflictResolutionPanel
+                      operation={op}
+                      onKeepServer={() => void handleKeepServer(op)}
+                      onRetryMine={() => void handleRetryMine(op)}
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -190,4 +225,78 @@ export function OutboxDrawer({ isOpen, onClose }: Props) {
       />
     </>
   );
+}
+
+interface ConflictResolutionPanelProps {
+  operation: SyncOperation;
+  onKeepServer: () => void;
+  onRetryMine: () => void;
+}
+
+function ConflictResolutionPanel({
+  operation,
+  onKeepServer,
+  onRetryMine,
+}: ConflictResolutionPanelProps) {
+  const serverCards = operation.conflict?.serverCards
+    ?? (operation.conflict?.serverCard ? [operation.conflict.serverCard] : []);
+
+  return (
+    <div className="conflict-panel">
+      <div className="conflict-panel-header">
+        <AlertTriangle size={14} />
+        <span>Conflict detected</span>
+      </div>
+
+      <p className="conflict-message">
+        {operation.conflict?.message ?? 'The server has a newer version of this card.'}
+      </p>
+
+      <div className="conflict-comparison">
+        <div>
+          <span className="conflict-label">Your queued change</span>
+          <p>{describeLocalChange(operation)}</p>
+        </div>
+
+        <div>
+          <span className="conflict-label">Server version</span>
+          {serverCards.length > 0 ? (
+            serverCards.map((card) => (
+              <p key={card.id}>
+                {card.title} - {new Date(card.updatedAt).toLocaleTimeString()}
+              </p>
+            ))
+          ) : (
+            <p>Server has newer data for this operation.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="conflict-actions">
+        <button type="button" className="btn-secondary" onClick={onKeepServer}>
+          Keep server
+        </button>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onRetryMine}
+          disabled={serverCards.length === 0}
+        >
+          Retry mine
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function describeLocalChange(operation: SyncOperation) {
+  if (operation.type === 'UPDATE_CARD') {
+    return `${operation.payload.title} - ${operation.payload.priority}`;
+  }
+
+  if (operation.type === 'BATCH_MOVE_CARDS') {
+    return `Move ${operation.payload.cards.length} card${operation.payload.cards.length === 1 ? '' : 's'}`;
+  }
+
+  return describeSyncOperation(operation);
 }

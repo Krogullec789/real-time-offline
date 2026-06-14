@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDB, queueOfflineAction } from '../db';
-import { processOutbox, type ApiClient } from './index';
+import { processOutbox, retryOperationWithServerVersion, type ApiClient } from './index';
 
 async function clearOutbox() {
   const db = await getDB();
@@ -26,6 +26,17 @@ function createConflictError() {
   const error = new Error('Conflict');
   Object.assign(error, {
     response: new Response(null, { status: 409 }),
+  });
+  return error;
+}
+
+function createJsonConflictError(payload: unknown) {
+  const error = new Error('Conflict');
+  Object.assign(error, {
+    response: new Response(JSON.stringify(payload), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    }),
   });
   return error;
 }
@@ -64,6 +75,97 @@ describe('processOutbox', () => {
       id: 'op-1',
       status: 'failed',
       retryCount: 1,
+    });
+  });
+
+  it('stores server card details for conflict resolution UI', async () => {
+    const serverCard = {
+      id: 'card-1',
+      columnId: 'column-1',
+      title: 'Server title',
+      description: 'Changed by another user',
+      priority: 'high' as const,
+      order: 0,
+      updatedAt: '2026-05-25T10:05:00.000Z',
+    };
+
+    await queueOfflineAction({
+      id: 'op-1',
+      type: 'UPDATE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      payload: {
+        id: 'card-1',
+        columnId: 'column-1',
+        title: 'Local title',
+        description: '',
+        priority: 'medium',
+        order: 0,
+        clientUpdatedAt: '2026-05-25T09:00:00.000Z',
+      },
+    });
+
+    await processOutbox(createApiClient({
+      updateCard: vi.fn().mockRejectedValue(createJsonConflictError({
+        message: 'Conflict: server has a newer version.',
+        serverCard,
+      })),
+    }));
+
+    const db = await getDB();
+    const operation = await db.get('outbox', 'op-1');
+
+    expect(operation).toMatchObject({
+      status: 'failed',
+      conflict: {
+        message: 'Conflict: server has a newer version.',
+        serverCard,
+      },
+    });
+  });
+
+  it('rebases a conflicted card update before retrying local changes', async () => {
+    const db = await getDB();
+    await db.put('outbox', {
+      id: 'op-1',
+      type: 'UPDATE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      status: 'failed',
+      retryCount: 1,
+      payload: {
+        id: 'card-1',
+        columnId: 'column-1',
+        title: 'Local title',
+        description: '',
+        priority: 'medium',
+        order: 0,
+        clientUpdatedAt: '2026-05-25T09:00:00.000Z',
+      },
+      conflict: {
+        message: 'Conflict: server has a newer version.',
+        serverCard: {
+          id: 'card-1',
+          columnId: 'column-1',
+          title: 'Server title',
+          description: '',
+          priority: 'high',
+          order: 0,
+          updatedAt: '2026-05-25T10:05:00.000Z',
+        },
+      },
+    });
+
+    const failedOperation = await db.get('outbox', 'op-1');
+    expect(failedOperation).toBeDefined();
+
+    await retryOperationWithServerVersion(failedOperation!);
+
+    await expect(db.get('outbox', 'op-1')).resolves.toMatchObject({
+      status: 'pending',
+      retryCount: 0,
+      payload: expect.objectContaining({
+        clientUpdatedAt: '2026-05-25T10:05:00.000Z',
+      }),
+      conflict: undefined,
     });
   });
 
