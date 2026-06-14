@@ -15,6 +15,31 @@ namespace KanbanBoard.Api.Tests;
 public class BatchMoveEndpointTests
 {
     [Fact]
+    public async Task BoardEndpoint_RequiresApiKey()
+    {
+        await using var factory = new KanbanApiFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Remove("X-API-Key");
+
+        var response = await client.GetAsync("/api/boards/00000000-0000-0000-0000-000000000001");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task BoardEndpoint_AcceptsBearerTokenForSignalRCompatibleAuth()
+    {
+        await using var factory = new KanbanApiFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Remove("X-API-Key");
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "test-api-key");
+
+        var response = await client.GetAsync("/api/boards/00000000-0000-0000-0000-000000000001");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task BatchMove_MovesCardToAnotherColumnThroughHttpEndpoint()
     {
         await using var factory = new KanbanApiFactory();

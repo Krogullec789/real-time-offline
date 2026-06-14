@@ -403,4 +403,114 @@ describe('processOutbox', () => {
     const db = await getDB();
     await expect(db.getAll('outbox')).resolves.toEqual([]);
   });
+
+  it('uses the server timestamp from an offline card update before replaying its later move', async () => {
+    await queueOfflineAction({
+      id: 'edit-card',
+      type: 'UPDATE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      payload: {
+        id: 'card-a',
+        columnId: 'todo',
+        title: 'Edited offline title',
+        description: '',
+        priority: 'medium',
+        order: 0,
+        clientUpdatedAt: '2026-05-25T09:00:00.000Z',
+      },
+    });
+    await queueOfflineAction({
+      id: 'move-card',
+      type: 'BATCH_MOVE_CARDS',
+      timestamp: '2026-05-25T10:01:00.000Z',
+      payload: {
+        cards: [
+          {
+            id: 'card-a',
+            columnId: 'done',
+            order: 1,
+            clientUpdatedAt: '2026-05-25T09:00:00.000Z',
+          },
+        ],
+      },
+    });
+
+    const updateCard = vi.fn().mockResolvedValue({
+      id: 'card-a',
+      columnId: 'todo',
+      title: 'Edited offline title',
+      description: '',
+      priority: 'medium',
+      order: 0,
+      updatedAt: '2026-05-25T10:02:00.000Z',
+    });
+    const batchMoveCards = vi.fn().mockResolvedValue([]);
+
+    await processOutbox(createApiClient({ updateCard, batchMoveCards }));
+
+    expect(batchMoveCards).toHaveBeenCalledWith({
+      cards: [
+        {
+          id: 'card-a',
+          columnId: 'done',
+          order: 1,
+          clientUpdatedAt: '2026-05-25T10:02:00.000Z',
+        },
+      ],
+    });
+
+    const db = await getDB();
+    await expect(db.getAll('outbox')).resolves.toEqual([]);
+  });
+
+  it('drops obsolete card edits before replaying a later delete for the same card', async () => {
+    await queueOfflineAction({
+      id: 'edit-card',
+      type: 'UPDATE_CARD',
+      timestamp: '2026-05-25T10:00:00.000Z',
+      payload: {
+        id: 'card-a',
+        columnId: 'todo',
+        title: 'Edited before delete',
+        description: '',
+        priority: 'medium',
+        order: 0,
+        clientUpdatedAt: '2026-05-25T09:00:00.000Z',
+      },
+    });
+    await queueOfflineAction({
+      id: 'move-card',
+      type: 'BATCH_MOVE_CARDS',
+      timestamp: '2026-05-25T10:01:00.000Z',
+      payload: {
+        cards: [
+          {
+            id: 'card-a',
+            columnId: 'done',
+            order: 1,
+            clientUpdatedAt: '2026-05-25T09:00:00.000Z',
+          },
+        ],
+      },
+    });
+    await queueOfflineAction({
+      id: 'delete-card',
+      type: 'DELETE_CARD',
+      timestamp: '2026-05-25T10:02:00.000Z',
+      payload: { id: 'card-a' },
+    });
+
+    const updateCard = vi.fn();
+    const batchMoveCards = vi.fn();
+    const deleteCard = vi.fn().mockResolvedValue(undefined);
+
+    await processOutbox(createApiClient({ updateCard, batchMoveCards, deleteCard }));
+
+    expect(updateCard).not.toHaveBeenCalled();
+    expect(batchMoveCards).not.toHaveBeenCalled();
+    expect(deleteCard).toHaveBeenCalledWith('card-a');
+
+    const db = await getDB();
+    await expect(db.getAll('outbox')).resolves.toEqual([]);
+  });
 });

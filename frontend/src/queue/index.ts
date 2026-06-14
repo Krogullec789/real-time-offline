@@ -26,7 +26,7 @@ interface OutboxWorkItem {
 }
 
 type BatchMoveOperation = Extract<SyncOperation, { type: 'BATCH_MOVE_CARDS' }>;
-type CreatedCardVersions = Map<string, string>;
+type ServerCardVersions = Map<string, string>;
 
 // We'll pass in these API functions from where they are defined, 
 // to avoid circular dependencies or keep the networking decoupled.
@@ -104,12 +104,16 @@ export async function processOutbox(apiClient: ApiClient, options: ProcessOutbox
       ...await outboxStore.index('by-status').getAll('failed'),
     ];
     pendingOps.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    const workItems = coalesceRepeatedCardUpdates(coalesceConsecutiveCardMoveBatches(pendingOps));
+    const prunedOps = pruneObsoleteCardChangesBeforeDeletes(pendingOps);
+    for (const operationId of prunedOps.obsoleteOperationIds) {
+      await db.delete('outbox', operationId);
+    }
+    const workItems = coalesceRepeatedCardUpdates(coalesceConsecutiveCardMoveBatches(prunedOps.operations));
 
-    const createdCardVersions: CreatedCardVersions = new Map();
+    const serverCardVersions: ServerCardVersions = new Map();
 
     for (const workItem of workItems) {
-      const op = applyCreatedCardVersions(workItem.operation, createdCardVersions);
+      const op = applyServerCardVersions(workItem.operation, serverCardVersions);
 
       for (const operationId of workItem.operationIds.filter((id) => id !== op.id)) {
         await db.delete('outbox', operationId);
@@ -122,10 +126,7 @@ export async function processOutbox(apiClient: ApiClient, options: ProcessOutbox
       
       try {
         const result = await executeOperation(op, apiClient);
-        if (op.type === 'CREATE_CARD' && result) {
-          const createdCard = result as Card;
-          createdCardVersions.set(createdCard.id, createdCard.updatedAt);
-        }
+        recordServerCardVersions(result, serverCardVersions);
 
         await options.onOperationSuccess?.(op, result);
         
@@ -168,9 +169,9 @@ export async function processOutbox(apiClient: ApiClient, options: ProcessOutbox
   }
 }
 
-function applyCreatedCardVersions(operation: SyncOperation, createdCardVersions: CreatedCardVersions): SyncOperation {
+function applyServerCardVersions(operation: SyncOperation, serverCardVersions: ServerCardVersions): SyncOperation {
   if (operation.type === 'UPDATE_CARD') {
-    const serverUpdatedAt = createdCardVersions.get(operation.payload.id);
+    const serverUpdatedAt = serverCardVersions.get(operation.payload.id);
     if (!serverUpdatedAt) return operation;
 
     return {
@@ -185,7 +186,7 @@ function applyCreatedCardVersions(operation: SyncOperation, createdCardVersions:
   if (operation.type === 'BATCH_MOVE_CARDS') {
     let changed = false;
     const cards = operation.payload.cards.map((cardPosition) => {
-      const serverUpdatedAt = createdCardVersions.get(cardPosition.id);
+      const serverUpdatedAt = serverCardVersions.get(cardPosition.id);
       if (!serverUpdatedAt) return cardPosition;
 
       changed = true;
@@ -204,6 +205,34 @@ function applyCreatedCardVersions(operation: SyncOperation, createdCardVersions:
   }
 
   return operation;
+}
+
+function recordServerCardVersions(result: unknown, serverCardVersions: ServerCardVersions) {
+  if (!result) return;
+
+  if (Array.isArray(result)) {
+    for (const item of result) {
+      recordServerCardVersion(item, serverCardVersions);
+    }
+    return;
+  }
+
+  recordServerCardVersion(result, serverCardVersions);
+}
+
+function recordServerCardVersion(result: unknown, serverCardVersions: ServerCardVersions) {
+  if (
+    typeof result === 'object'
+    && result !== null
+    && 'id' in result
+    && 'columnId' in result
+    && 'updatedAt' in result
+    && typeof (result as { id: unknown }).id === 'string'
+    && typeof (result as { updatedAt: unknown }).updatedAt === 'string'
+  ) {
+    const serverCard = result as Pick<Card, 'id' | 'updatedAt'>;
+    serverCardVersions.set(serverCard.id, serverCard.updatedAt);
+  }
 }
 
 function coalesceConsecutiveCardMoveBatches(operations: SyncOperation[]): OutboxWorkItem[] {
@@ -257,6 +286,82 @@ function coalesceConsecutiveCardMoveBatches(operations: SyncOperation[]): Outbox
   }
 
   return workItems;
+}
+
+function pruneObsoleteCardChangesBeforeDeletes(operations: SyncOperation[]) {
+  const latestDeleteIndexByCardId = new Map<string, number>();
+  const createIndexByCardId = new Map<string, number>();
+  const locallyCreatedThenDeletedCardIds = new Set<string>();
+
+  operations.forEach((operation, index) => {
+    if (operation.type === 'CREATE_CARD' && operation.payload.id) {
+      createIndexByCardId.set(operation.payload.id, index);
+    }
+
+    if (operation.type === 'DELETE_CARD') {
+      latestDeleteIndexByCardId.set(operation.payload.id, index);
+    }
+  });
+
+  for (const [cardId, createIndex] of createIndexByCardId) {
+    const deleteIndex = latestDeleteIndexByCardId.get(cardId);
+    if (deleteIndex !== undefined && deleteIndex > createIndex) {
+      locallyCreatedThenDeletedCardIds.add(cardId);
+    }
+  }
+
+  const obsoleteOperationIds = new Set<string>();
+  const prunedOperations: SyncOperation[] = [];
+
+  operations.forEach((operation, index) => {
+    if (operation.type === 'CREATE_CARD' && operation.payload.id) {
+      const deleteIndex = latestDeleteIndexByCardId.get(operation.payload.id);
+      if (deleteIndex !== undefined && deleteIndex > index) {
+        obsoleteOperationIds.add(operation.id);
+        return;
+      }
+    }
+
+    if (operation.type === 'UPDATE_CARD') {
+      const deleteIndex = latestDeleteIndexByCardId.get(operation.payload.id);
+      if (deleteIndex !== undefined && deleteIndex > index) {
+        obsoleteOperationIds.add(operation.id);
+        return;
+      }
+    }
+
+    if (operation.type === 'BATCH_MOVE_CARDS') {
+      const cards = operation.payload.cards.filter((cardPosition) => {
+        const deleteIndex = latestDeleteIndexByCardId.get(cardPosition.id);
+        return deleteIndex === undefined || deleteIndex <= index;
+      });
+
+      if (cards.length === 0) {
+        obsoleteOperationIds.add(operation.id);
+        return;
+      }
+
+      prunedOperations.push(cards.length === operation.payload.cards.length
+        ? operation
+        : { ...operation, payload: { cards } });
+      return;
+    }
+
+    if (
+      operation.type === 'DELETE_CARD'
+      && locallyCreatedThenDeletedCardIds.has(operation.payload.id)
+    ) {
+      obsoleteOperationIds.add(operation.id);
+      return;
+    }
+
+    prunedOperations.push(operation);
+  });
+
+  return {
+    operations: prunedOperations,
+    obsoleteOperationIds: [...obsoleteOperationIds],
+  };
 }
 
 function coalesceRepeatedCardUpdates(workItems: OutboxWorkItem[]): OutboxWorkItem[] {
